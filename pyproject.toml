@@ -1,0 +1,20 @@
+[project]
+name = "game-buddy"
+version = "0.1.0"
+description = "Terminal chatbot for gaming discussions, built with Pydantic AI"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic-ai>=2.7.0",
+    "pydantic-ai-slim[duckduckgo]",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.pytest.ini_options]
+# Where pytest looks for tests.
+testpaths = ["tests"]
+
+[project.scripts]
+buddy = "buddy.main:main"
