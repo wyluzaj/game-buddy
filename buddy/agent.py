@@ -1,15 +1,18 @@
 """Pydantic AI Agent factory and history filter."""
 from datetime import datetime, timedelta, timezone
 from pydantic_ai import Agent, ModelMessage
-from pydantic_ai.capabilities import ProcessHistory, WebSearch
+from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 from buddy.config import USE_LAST_N, USE_LAST_MINUTES, HISTORY_LIMIT, HISTORY_MINUTES
 
 INSTRUCTIONS = """
 Jestes buddym do gadania podczas grania w gry.
 Odpowiadaj krotko (max 2-3 zdania), naturalnie, po polsku, luzno.
-Jesli user pyta o aktualne informacje (premiery, patch notes, poradniki, 
-newsy) — uzyj web search zamiast zgadywac.
-Jesli nie znasz odpowiedzi i nie mozesz jej znalezc — przyznaj sie.
+
+Jesli nie znasz odpowiedzi na pytanie — wywolaj tool
+`duckduckgo_search`. Nie zgaduj i nie mow "to sie jeszcze nie odbylo",
+jesli mozesz to sprawdzic. Jesli wyszukiwanie nic sensownego nie
+zwroci — przyznaj sie, ze nie wiesz.
 """.strip()
 
 
@@ -32,6 +35,6 @@ def build_agent(model) -> Agent:
         instructions=INSTRUCTIONS,
         capabilities=[
             ProcessHistory(keep_recent),
-            # WebSearch(local="duckduckgo")
         ],
+        tools=[duckduckgo_search_tool()],
     )
