@@ -5,7 +5,9 @@ description = "Terminal chatbot for gaming discussions, built with Pydantic AI"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic-ai>=2.7.0",
-    "pydantic-ai-slim[duckduckgo]",
+    "pydantic-ai-slim[duckduckgo]>=2.22.0",
+    "pydantic-ai-harness>=0.15.0",
+    "openai>=2.52.0",
     "python-dotenv>=1.0.0",
 ]
 
