@@ -38,7 +38,8 @@ def main():
                 result = agent.run_sync(user_input, message_history=history)
                 print(f"\nBot: {result.output}\n")
                 save_messages(conn, conversation_id, result.new_messages_json().decode())
-                history.extend(result.new_messages())
+                # Keep the capability-processed history (including its summary) in RAM.
+                history = result.all_messages()
             except Exception as e:
                 print(f"\n[Error: {e}]\n")
     finally:
