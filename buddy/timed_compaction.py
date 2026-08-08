@@ -9,9 +9,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -23,8 +22,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 
+# Harness does not expose the cutoff and tracing helpers through its public API.
+# This capability intentionally mirrors Harness SummarizingCompaction and therefore
+# depends on the same internal helpers as the upstream implementation.
+# noinspection PyProtectedMember
 from pydantic_ai_harness.compaction._shared import (
     _is_safe_cutoff,
     compact_with_span,
@@ -73,6 +76,11 @@ _SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
 _MEMORY_METADATA_PREFIX = 'pydantic-ai-harness.memory.v1:'
 
 
+def _stringify_tool_value(value: Any) -> str:
+    """Render tool data whose value type is intentionally unrestricted."""
+    return str(value)
+
+
 def format_messages(messages: Sequence[ModelMessage]) -> str:
     """Render conversation content without injected memory or provider metadata."""
     lines: list[str] = []
@@ -86,8 +94,9 @@ def format_messages(messages: Sequence[ModelMessage]) -> str:
                 elif isinstance(part, SystemPromptPart):
                     lines.append(f'System: {part.content}')
                 elif isinstance(part, ToolReturnPart):
-                    content_str = str(part.content)[:500]
-                    if len(str(part.content)) > 500:
+                    full_content = _stringify_tool_value(part.content)
+                    content_str = full_content[:500]
+                    if len(full_content) > 500:
                         content_str += '...'
                     lines.append(f'Tool [{part.tool_name}]: {content_str}')
         else:
@@ -95,7 +104,8 @@ def format_messages(messages: Sequence[ModelMessage]) -> str:
                 if isinstance(part, TextPart):
                     lines.append(f'Assistant: {part.content}')
                 elif isinstance(part, ToolCallPart):
-                    lines.append(f'Tool Call [{part.tool_name}]: {part.args}')
+                    args = _stringify_tool_value(part.args)
+                    lines.append(f'Tool Call [{part.tool_name}]: {args}')
     return '\n'.join(lines)
 
 
@@ -339,8 +349,10 @@ class SummarizingCompactionTimed(AbstractCapability[AgentDepsT]):
             prompt = f'{prompt}\n\n<previous_summary>\n{previous_summary}\n</previous_summary>'
 
         model = self.model if self.model is not None else ctx.model
-        agent: Agent[None, str] = Agent(
-            model,
+        agent = Agent[None, str](
+            model=model,
+            deps_type=type(None),
+            output_type=str,
             instructions='You are a context summarization assistant. Extract the most important information from conversations.',
         )
         result = await agent.run(prompt, usage=ctx.usage)
