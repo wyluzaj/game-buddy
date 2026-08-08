@@ -11,6 +11,7 @@ optionally sends traces to Pydantic Logfire.
 - Time-based short-term memory compaction with a recent-message floor.
 - Persistent long-term Harness Memory backed by SQLite.
 - Automatic consolidation of completed sessions into long-term memory.
+- Same-tier fallback models for chat, short-term summarization, and long-term analysis.
 - Old tool-result cleanup with `ClearToolResults`.
 - DuckDuckGo search for questions the agent cannot answer reliably.
 - Optional Pydantic AI tracing with Logfire.
@@ -19,17 +20,19 @@ optionally sends traces to Pydantic Logfire.
 
 The application uses three levels of conversation context:
 
-1. **Immediate memory** — the current session's processed Pydantic AI message history is
+1. **Immediate memory**: the current session's processed Pydantic AI message history is
    held in RAM and passed to the next agent run. Raw message batches are also written to
    `data/chatbot.db`.
-2. **Short-term memory** — `SummarizingCompactionTimed`, a custom time-based variant of
+2. **Short-term memory**: `SummarizingCompactionTimed`, a custom time-based variant of
    Harness [`SummarizingCompaction`](https://pydantic.dev/docs/ai/harness/compaction/),
    replaces expired messages with a structured summary. By default it keeps everything
    from the last 30 minutes and always keeps at least 15 recent messages. Existing summaries
-   are updated incrementally using only newly expired messages.
-3. **Long-term memory** — Harness [`Memory`](https://pydantic.dev/docs/ai/harness/memory/)
+   are updated incrementally using only newly expired messages. Its configured summarizer
+   uses the same tier-based fallback policy as the main chat model.
+3. **Long-term memory**: Harness [`Memory`](https://pydantic.dev/docs/ai/harness/memory/)
    stores a logical `main/MEMORY.md` notebook inside `data/memory.db`. Its bounded content is
    injected into later model requests and remains available between application sessions.
+   The model that consolidates completed sessions also uses the tier-based fallback policy.
 
 The long-term flow is:
 
@@ -46,8 +49,7 @@ The long-term analyzer treats user statements as the source of facts. Assistant-
 greetings, temporary details, and empty sessions are not promoted to durable memory. A failed
 session remains pending so it can be retried without blocking later sessions.
 
-Raw history is intentionally **not restored as an active conversation after restarting the
-application**. Cross-session continuity comes from curated long-term memory. The raw database
+The raw database
 is retained for persistence and as a fallback source for memory analysis.
 
 ### Tool-result compaction
@@ -66,7 +68,6 @@ Before a model request, `SummarizingCompactionTimed`:
 - moves the cutoff backward when necessary to preserve tool-call/tool-return integrity;
 - does nothing when no new expired messages need summarizing.
 
-The first user message is not specially preserved (`preserve_first_user_message=False`).
 
 ## Web search
 
@@ -143,15 +144,17 @@ local user data and are ignored by Git.
 
 The current model catalog is defined in `buddy/config.py`:
 
-| Role | Default |
-| --- | --- |
-| Main chat model | `google:gemini-3.5-flash` |
-| Short-term summarizer | `google:gemini-3.1-flash-lite` |
-| Long-term memory analyzer | `google:gemini-3.1-flash-lite` |
+| Role | Primary/default | Fallback |
+| --- | --- | --- |
+| Main chat model | `google:gemini-3.5-flash` | None for the default `high` tier; selected models use a same-tier peer when available |
+| Short-term summarizer | `google:gemini-3.1-flash-lite` | `openrouter:openai/gpt-oss-120b:free` |
+| Long-term memory analyzer | `google:gemini-3.1-flash-lite` | `openrouter:openai/gpt-oss-120b:free` |
 
 Available chat models also include Gemini 3.1 Flash Lite and the OpenRouter-hosted free
-GPT-OSS 120B and 20B models. Models sharing a tier are configured as fallbacks for one
-another; models that are alone in a tier have no fallback.
+GPT-OSS 120B and 20B models. The main chat, short-term summarizer, and long-term analyzer all
+use the shared `build_model()` function. It preserves the configured model as primary and
+adds other models from the same tier as ordered fallbacks. Models alone in a tier have no
+fallback.
 
 Important settings:
 
