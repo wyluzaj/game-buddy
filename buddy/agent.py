@@ -8,6 +8,7 @@ from buddy.config import (
     HISTORY_MINUTES,
     MIN_RECENT_MESSAGES,
     SHORT_TERM_MEMORY_MODEL,
+    build_model,
 )
 from buddy.long_term_memory import create_long_term_memory
 from buddy.prompts import CHAT_AGENT_INSTRUCTIONS
@@ -26,7 +27,7 @@ def build_agent(model, *, memory: Memory | None = None) -> Agent:
                 keep_pairs=3,
             ),
             SummarizingCompactionTimed(
-                model=SHORT_TERM_MEMORY_MODEL.value,
+                model=build_model(SHORT_TERM_MEMORY_MODEL),
                 history_minutes=HISTORY_MINUTES,
                 min_keep_messages=MIN_RECENT_MESSAGES,
             ),

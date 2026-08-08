@@ -10,7 +10,7 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai_harness.memory import Memory
 
-from buddy.config import LONG_TERM_MEMORY_MODEL
+from buddy.config import LONG_TERM_MEMORY_MODEL, build_model
 from buddy.database import (
     get_conversations_pending_memory,
     get_messages,
@@ -54,11 +54,12 @@ class MemoryProcessingReport:
 
 
 def build_memory_analyzer(
-    model: str | PydanticModel = LONG_TERM_MEMORY_MODEL.value,
+    model: str | PydanticModel | None = None,
 ) -> Agent[None, MemoryAnalysisResult]:
     """Build the dedicated agent that curates completed session memory."""
+    analyzer_model = model if model is not None else build_model(LONG_TERM_MEMORY_MODEL)
     return Agent[None, MemoryAnalysisResult](
-        model=model,
+        model=analyzer_model,
         deps_type=type(None),
         instructions=LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
         output_type=MemoryAnalysisResult,

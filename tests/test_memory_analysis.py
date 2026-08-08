@@ -1,15 +1,16 @@
 import asyncio
 from dataclasses import dataclass
-import inspect
 
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     UserPromptPart,
 )
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
-from buddy.config import LONG_TERM_MEMORY_MODEL
+from buddy.config import LONG_TERM_MEMORY_MODEL, Model
 from buddy.database import create_conversation, finish_conversation, save_messages
 from buddy.long_term_memory import MEMORY_STORE_PATH
 from buddy.memory_analysis import (
@@ -51,11 +52,28 @@ class FailingThenUnchangedAnalyzer:
         )
 
 
-def test_memory_analyzer_uses_configured_long_term_model():
-    """The analyzer model comes from config instead of a module-local literal."""
-    model_parameter = inspect.signature(build_memory_analyzer).parameters["model"]
+def test_memory_analyzer_uses_configured_long_term_fallback(monkeypatch):
+    """The analyzer uses its configured model and same-tier fallback."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
 
-    assert model_parameter.default == LONG_TERM_MEMORY_MODEL.value
+    analyzer = build_memory_analyzer()
+
+    assert isinstance(analyzer.model, FallbackModel)
+    used_names = [model.model_name for model in analyzer.model.models]
+    assert used_names == [
+        LONG_TERM_MEMORY_MODEL.value.split(":", 1)[1],
+        Model.OPENAI.value.split(":", 1)[1],
+    ]
+
+
+def test_memory_analyzer_respects_explicit_model_override():
+    """An explicitly supplied analyzer model bypasses configured fallback construction."""
+    explicit_model = TestModel()
+
+    analyzer = build_memory_analyzer(explicit_model)
+
+    assert analyzer.model is explicit_model
 
 
 def test_prompt_contains_current_memory_and_completed_session():
