@@ -4,7 +4,14 @@ from dotenv import load_dotenv
 load_dotenv()
 from buddy.config import choose_model, build_model
 from buddy.agent import build_agent
-from buddy.database import init_db, create_conversation, save_messages, get_messages
+from buddy.database import (
+    create_conversation,
+    finish_conversation,
+    get_messages,
+    init_db,
+    save_messages,
+)
+from buddy.timed_compaction import format_messages
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 
@@ -43,7 +50,11 @@ def main():
             except Exception as e:
                 print(f"\n[Error: {e}]\n")
     finally:
-        conn.close()
+        try:
+            compacted_history = format_messages(history)
+            finish_conversation(conn, conversation_id, compacted_history)
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

@@ -3,6 +3,13 @@ import sqlite3
 from pathlib import Path
 
 
+_CONVERSATION_COLUMNS: dict[str, str] = {
+    "ended_at": "TIMESTAMP",
+    "compacted_history": "TEXT",
+    "memory_analyzed_at": "TIMESTAMP",
+}
+
+
 def _open_connection(db_path: str) -> sqlite3.Connection:
     """Make a new connection to the database and enable foreign keys."""
     if db_path != ":memory:":
@@ -22,9 +29,22 @@ def init_db(db_path: str = "data/chatbot.db") -> sqlite3.Connection:
                  (
                      id         INTEGER PRIMARY KEY AUTOINCREMENT,
                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                     ended_at TIMESTAMP,
+                     compacted_history TEXT,
+                     memory_analyzed_at TIMESTAMP
                  )
                  ''')
+
+    existing_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+    }
+    for name, column_type in _CONVERSATION_COLUMNS.items():
+        if name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE conversations ADD COLUMN {name} {column_type}"
+            )
 
     conn.execute('''
                  CREATE TABLE IF NOT EXISTS messages
@@ -65,3 +85,50 @@ def get_messages(conn: sqlite3.Connection, conversation_id: int) -> list[str]:
     )
     rows = cursor.fetchall()
     return [row["message_list"] for row in rows]
+
+
+def finish_conversation(
+    conn: sqlite3.Connection,
+    conversation_id: int,
+    compacted_history: str,
+) -> None:
+    """Mark a conversation as ended and persist its final compacted context."""
+    conn.execute(
+        """
+        UPDATE conversations
+        SET ended_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP,
+            compacted_history = ?
+        WHERE id = ?
+        """,
+        (compacted_history, conversation_id),
+    )
+    conn.commit()
+
+
+def get_conversations_pending_memory(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Return ended conversations that have not updated long-term memory yet."""
+    cursor = conn.execute(
+        """
+        SELECT id, compacted_history
+        FROM conversations
+        WHERE ended_at IS NOT NULL
+          AND memory_analyzed_at IS NULL
+        ORDER BY id ASC
+        """
+    )
+    return cursor.fetchall()
+
+
+def mark_memory_analyzed(conn: sqlite3.Connection, conversation_id: int) -> None:
+    """Mark a conversation as successfully processed into long-term memory."""
+    conn.execute(
+        """
+        UPDATE conversations
+        SET memory_analyzed_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (conversation_id,),
+    )
+    conn.commit()

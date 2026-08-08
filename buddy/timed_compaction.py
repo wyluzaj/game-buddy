@@ -70,16 +70,19 @@ markdown fences.
 """
 
 _SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
+_MEMORY_METADATA_PREFIX = 'pydantic-ai-harness.memory.v1:'
 
 
-def _format_messages(messages: Sequence[ModelMessage]) -> str:
-    """Render messages into a human-readable string for summarization."""
+def format_messages(messages: Sequence[ModelMessage]) -> str:
+    """Render conversation content without injected memory or provider metadata."""
     lines: list[str] = []
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, UserPromptPart):
-                    lines.append(f'User: {_user_prompt_text(part)}')
+                    user_text = _user_prompt_text(part)
+                    if user_text:
+                        lines.append(f'User: {user_text}')
                 elif isinstance(part, SystemPromptPart):
                     lines.append(f'System: {part.content}')
                 elif isinstance(part, ToolReturnPart):
@@ -105,6 +108,11 @@ def _user_prompt_text(part: UserPromptPart) -> str:
         if isinstance(item, str):
             texts.append(item)
         elif isinstance(item, TextContent):
+            if (
+                isinstance(item.metadata, str)
+                and item.metadata.startswith(_MEMORY_METADATA_PREFIX)
+            ):
+                continue
             texts.append(item.content)
     return ' '.join(texts) if texts else ''
 
@@ -324,7 +332,7 @@ class SummarizingCompactionTimed(AbstractCapability[AgentDepsT]):
         """Generate a summary for the given messages using the configured model."""
         from pydantic_ai import Agent
 
-        formatted = _format_messages(messages)
+        formatted = format_messages(messages)
         prompt = self.summary_prompt.format(messages=formatted)
 
         if previous_summary is not None:

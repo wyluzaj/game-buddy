@@ -8,6 +8,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     SystemPromptPart,
+    TextContent,
     UserPromptPart,
 )
 
@@ -15,6 +16,7 @@ from buddy.timed_compaction import (
     _SUMMARY_PREFIX,
     SummarizingCompactionTimed,
     _find_time_cutoff,
+    format_messages,
 )
 
 
@@ -161,3 +163,25 @@ def test_incremental_summary_receives_only_newly_expired_messages(monkeypatch):
     ]
     assert len(summary_parts) == 1
     assert summary_parts[0].content == f"{_SUMMARY_PREFIX}updated summary"
+
+
+def test_format_messages_excludes_harness_memory_injection():
+    """Long-term memory injected into a request is not copied into session context."""
+    request = ModelRequest(
+        parts=[
+            UserPromptPart(content="Nowa wiadomość użytkownika"),
+            UserPromptPart(
+                content=[
+                    TextContent(
+                        content="<memory>stara pamięć</memory>",
+                        metadata="pydantic-ai-harness.memory.v1:test",
+                    )
+                ]
+            ),
+        ]
+    )
+
+    formatted = format_messages([request])
+
+    assert formatted == "User: Nowa wiadomość użytkownika"
+    assert "stara pamięć" not in formatted
