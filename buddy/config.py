@@ -24,6 +24,7 @@ ACTIVE_MODEL = Model.GEMINI
 MIN_RECENT_MESSAGES = 15
 HISTORY_MINUTES = 30
 
+MEMORY_DATABASE_PATH = "data/memory.db"
 
 def choose_model() -> Model:
     """

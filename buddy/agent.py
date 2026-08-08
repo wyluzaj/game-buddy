@@ -2,12 +2,14 @@
 from pydantic_ai import Agent
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 from pydantic_ai_harness.compaction import ClearToolResults
+from pydantic_ai_harness.memory import Memory
 
 from buddy.config import (
     HISTORY_MINUTES,
     MIN_RECENT_MESSAGES,
     Model,
 )
+from buddy.long_term_memory import create_long_term_memory
 from buddy.timed_compaction import SummarizingCompactionTimed
 
 INSTRUCTIONS = """
@@ -21,8 +23,9 @@ zwroci — przyznaj sie, ze nie wiesz.
 """.strip()
 
 
-def build_agent(model) -> Agent:
+def build_agent(model, *, memory: Memory | None = None) -> Agent:
     """Builds and returns an Agent instance with the specified model and instructions."""
+    long_term_memory = memory or create_long_term_memory()
     return Agent(
         model=model,
         instructions=INSTRUCTIONS,
@@ -36,6 +39,7 @@ def build_agent(model) -> Agent:
                 history_minutes=HISTORY_MINUTES,
                 min_keep_messages=MIN_RECENT_MESSAGES,
             ),
+            long_term_memory,
         ],
         tools=[duckduckgo_search_tool()],
     )
