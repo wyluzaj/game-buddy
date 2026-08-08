@@ -1,13 +1,22 @@
-"""Consolidate a completed session into long-term Harness Memory."""
+"""Consolidate completed sessions into long-term Harness Memory."""
 
+from dataclasses import dataclass, field
+import sqlite3
 from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai_harness.memory import Memory
 
 from buddy.config import Model
+from buddy.database import (
+    get_conversations_pending_memory,
+    get_messages,
+    mark_memory_analyzed,
+)
 from buddy.long_term_memory import MEMORY_STORE_PATH
+from buddy.timed_compaction import format_messages
 
 
 class MemoryAnalysisResult(BaseModel):
@@ -15,6 +24,15 @@ class MemoryAnalysisResult(BaseModel):
 
     changed: bool
     memory_markdown: str
+
+
+@dataclass
+class MemoryProcessingReport:
+    """Outcome of processing all sessions waiting for long-term memory."""
+
+    processed: int = 0
+    updated: int = 0
+    failed_conversation_ids: list[int] = field(default_factory=list)
 
 
 MEMORY_ANALYZER_INSTRUCTIONS = """
@@ -116,3 +134,59 @@ async def update_long_term_memory(
         expected_version=memory_file.version if memory_file is not None else None,
     )
     return True
+
+
+def _deserialize_context_snapshot(snapshot: str) -> str:
+    """Normalize current text snapshots and legacy ModelMessages JSON snapshots."""
+    snapshot = snapshot.strip()
+    if not snapshot:
+        return ""
+    try:
+        messages = ModelMessagesTypeAdapter.validate_json(snapshot)
+    except ValueError:
+        return snapshot
+    return format_messages(messages)
+
+
+def _load_raw_conversation_context(
+    conn: sqlite3.Connection,
+    conversation_id: int,
+) -> str:
+    """Build analyzer input from raw messages when no final snapshot exists."""
+    messages = []
+    for raw_message_list in get_messages(conn, conversation_id):
+        messages.extend(ModelMessagesTypeAdapter.validate_json(raw_message_list))
+    return format_messages(messages)
+
+
+async def process_pending_memories(
+    conn: sqlite3.Connection,
+    analyzer: Agent,
+    memory: Memory,
+) -> MemoryProcessingReport:
+    """Process ended sessions once, leaving failed sessions pending for retry."""
+    report = MemoryProcessingReport()
+    for row in get_conversations_pending_memory(conn):
+        conversation_id = row["id"]
+        try:
+            snapshot = row["compacted_history"] or ""
+            session_context = _deserialize_context_snapshot(snapshot)
+            if not session_context:
+                session_context = _load_raw_conversation_context(
+                    conn,
+                    conversation_id,
+                )
+
+            changed = await update_long_term_memory(
+                analyzer,
+                memory,
+                session_context,
+            )
+            mark_memory_analyzed(conn, conversation_id)
+            report.processed += 1
+            if changed:
+                report.updated += 1
+        except Exception:
+            report.failed_conversation_ids.append(conversation_id)
+
+    return report

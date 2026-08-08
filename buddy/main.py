@@ -1,4 +1,6 @@
 """Terminal entry point: builds the agent, opens the database, runs the chat loop."""
+import asyncio
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -7,26 +9,42 @@ from buddy.agent import build_agent
 from buddy.database import (
     create_conversation,
     finish_conversation,
-    get_messages,
+    get_conversations_pending_memory,
     init_db,
     save_messages,
 )
+from buddy.long_term_memory import create_long_term_memory
+from buddy.memory_analysis import build_memory_analyzer, process_pending_memories
 from buddy.timed_compaction import format_messages
-from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 
 def main():
     """Main function to run the chatbot session."""
     chosen = choose_model()
     model_object = build_model(chosen)
-    agent = build_agent(model_object)
     conn = init_db()
-    conversation_id = create_conversation(conn)
+    memory = create_long_term_memory()
 
+    pending = get_conversations_pending_memory(conn)
+    if pending:
+        try:
+            analyzer = build_memory_analyzer()
+            report = asyncio.run(process_pending_memories(conn, analyzer, memory))
+            if report.processed:
+                print(
+                    "Long-term memory: "
+                    f"processed {report.processed} session(s), "
+                    f"updated by {report.updated}."
+                )
+            if report.failed_conversation_ids:
+                failed = ", ".join(map(str, report.failed_conversation_ids))
+                print(f"[Memory analysis failed for conversation(s): {failed}]")
+        except Exception as error:
+            print(f"[Memory analysis unavailable: {error}]")
+
+    agent = build_agent(model_object, memory=memory)
+    conversation_id: int | None = None
     history = []
-    for raw in get_messages(conn, conversation_id):
-        messages = ModelMessagesTypeAdapter.validate_json(raw)
-        history.extend(messages)
 
     try:
         print("Ready to go. Ctrl + C to end session.\n")
@@ -44,6 +62,8 @@ def main():
             try:
                 result = agent.run_sync(user_input, message_history=history)
                 print(f"\nBot: {result.output}\n")
+                if conversation_id is None:
+                    conversation_id = create_conversation(conn)
                 save_messages(conn, conversation_id, result.new_messages_json().decode())
                 # Keep the capability-processed history (including its summary) in RAM.
                 history = result.all_messages()
@@ -51,8 +71,9 @@ def main():
                 print(f"\n[Error: {e}]\n")
     finally:
         try:
-            compacted_history = format_messages(history)
-            finish_conversation(conn, conversation_id, compacted_history)
+            if conversation_id is not None:
+                compacted_history = format_messages(history)
+                finish_conversation(conn, conversation_id, compacted_history)
         finally:
             conn.close()
 
