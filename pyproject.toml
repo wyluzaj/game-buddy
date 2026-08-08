@@ -1,18 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "game-buddy"
 version = "0.1.0"
 description = "Terminal chatbot for gaming discussions, built with Pydantic AI"
 requires-python = ">=3.10"
 dependencies = [
-    "pydantic-ai>=2.7.0",
-    "pydantic-ai-slim[duckduckgo]>=2.22.0",
-    "pydantic-ai-harness>=0.15.0",
-    "openai>=2.52.0",
-    "python-dotenv>=1.0.0",
+    "logfire[httpx]>=4.16.0,<5.0.0",
+    "pydantic>=2.10.0,<3.0.0",
+    "pydantic-ai-slim[duckduckgo,google,openrouter]>=2.22.0,<2.23.0",
+    # timed_compaction.py uses internal helpers from the Harness 0.15 series.
+    "pydantic-ai-harness>=0.15.0,<0.16.0",
+    "python-dotenv>=1.0.0,<2.0.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0"]
+dev = ["pytest>=8.0.0,<10.0.0"]
 
 [tool.pytest.ini_options]
 # Where pytest looks for tests.
@@ -20,3 +25,6 @@ testpaths = ["tests"]
 
 [project.scripts]
 buddy = "buddy.main:main"
+
+[tool.setuptools.packages.find]
+include = ["buddy*"]

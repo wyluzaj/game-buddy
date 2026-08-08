@@ -1,9 +1,13 @@
 """Terminal entry point: builds the agent, opens the database, runs the chat loop."""
 import asyncio
 
+import logfire
 from dotenv import load_dotenv
 
 load_dotenv()
+logfire.configure(send_to_logfire="if-token-present")
+logfire.instrument_pydantic_ai()
+
 from buddy.config import choose_model, build_model
 from buddy.agent import build_agent
 from buddy.database import (
