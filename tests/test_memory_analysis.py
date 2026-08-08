@@ -1,5 +1,6 @@
 import asyncio
-from types import SimpleNamespace
+from dataclasses import dataclass
+import inspect
 
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
@@ -8,14 +9,21 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
+from buddy.config import LONG_TERM_MEMORY_MODEL
 from buddy.database import create_conversation, finish_conversation, save_messages
 from buddy.long_term_memory import MEMORY_STORE_PATH
 from buddy.memory_analysis import (
     MemoryAnalysisResult,
+    build_memory_analyzer,
     build_memory_analysis_prompt,
     process_pending_memories,
     update_long_term_memory,
 )
+
+
+@dataclass
+class StubRunResult:
+    output: MemoryAnalysisResult
 
 
 class StubAnalyzer:
@@ -23,22 +31,31 @@ class StubAnalyzer:
         self.output = output
         self.prompts: list[str] = []
 
-    async def run(self, prompt: str):
+    async def run(self, prompt: str) -> StubRunResult:
         self.prompts.append(prompt)
-        return SimpleNamespace(output=self.output)
+        return StubRunResult(output=self.output)
 
 
 class FailingThenUnchangedAnalyzer:
     def __init__(self):
         self.calls = 0
+        self.prompts: list[str] = []
 
-    async def run(self, prompt: str):
+    async def run(self, prompt: str) -> StubRunResult:
         self.calls += 1
+        self.prompts.append(prompt)
         if self.calls == 1:
             raise RuntimeError("temporary model failure")
-        return SimpleNamespace(
+        return StubRunResult(
             output=MemoryAnalysisResult(changed=False, memory_markdown="")
         )
+
+
+def test_memory_analyzer_uses_configured_long_term_model():
+    """The analyzer model comes from config instead of a module-local literal."""
+    model_parameter = inspect.signature(build_memory_analyzer).parameters["model"]
+
+    assert model_parameter.default == LONG_TERM_MEMORY_MODEL.value
 
 
 def test_prompt_contains_current_memory_and_completed_session():
@@ -61,7 +78,7 @@ def test_update_long_term_memory_merges_and_persists_memory():
             "- Użytkowniczka gra magiem.",
             expected_version=None,
         )
-        analyzer = StubAnalyzer(
+        scenario_analyzer = StubAnalyzer(
             MemoryAnalysisResult(
                 changed=True,
                 memory_markdown=(
@@ -71,13 +88,13 @@ def test_update_long_term_memory_merges_and_persists_memory():
             )
         )
 
-        changed = await update_long_term_memory(
-            analyzer,
+        was_changed = await update_long_term_memory(
+            scenario_analyzer,
             memory,
             "User: Nie lubię spoilerów dotyczących bossów.",
         )
-        memory_file = await memory.store.read(MEMORY_STORE_PATH, max_chars=10_000)
-        return changed, analyzer, memory_file
+        stored_memory = await memory.store.read(MEMORY_STORE_PATH, max_chars=10_000)
+        return was_changed, scenario_analyzer, stored_memory
 
     changed, analyzer, memory_file = asyncio.run(scenario())
 
@@ -91,25 +108,26 @@ def test_update_long_term_memory_merges_and_persists_memory():
 def test_unchanged_analysis_does_not_rewrite_memory():
     async def scenario():
         memory = Memory(InMemoryStore())
-        initial = await memory.store.write(
+        initial_write = await memory.store.write(
             MEMORY_STORE_PATH,
             "- Użytkowniczka gra magiem.",
             expected_version=None,
         )
-        analyzer = StubAnalyzer(
+        scenario_analyzer = StubAnalyzer(
             MemoryAnalysisResult(
                 changed=False,
                 memory_markdown="- Użytkowniczka gra magiem.",
             )
         )
 
-        changed = await update_long_term_memory(
-            analyzer,
+        was_changed = await update_long_term_memory(
+            scenario_analyzer,
             memory,
-            "Assistant: Użytkowniczka gra magiem.",
+            "User: Nadal gram magiem.",
         )
-        memory_file = await memory.store.read(MEMORY_STORE_PATH, max_chars=10_000)
-        return changed, initial, memory_file
+        assert len(scenario_analyzer.prompts) == 1
+        stored_memory = await memory.store.read(MEMORY_STORE_PATH, max_chars=10_000)
+        return was_changed, initial_write, stored_memory
 
     changed, initial, memory_file = asyncio.run(scenario())
 

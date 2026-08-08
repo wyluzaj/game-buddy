@@ -7,7 +7,7 @@ from pydantic_ai_harness.memory import Memory
 from buddy.config import (
     HISTORY_MINUTES,
     MIN_RECENT_MESSAGES,
-    Model,
+    SHORT_TERM_MEMORY_MODEL,
 )
 from buddy.long_term_memory import create_long_term_memory
 from buddy.timed_compaction import SummarizingCompactionTimed
@@ -35,7 +35,7 @@ def build_agent(model, *, memory: Memory | None = None) -> Agent:
                 keep_pairs=3,
             ),
             SummarizingCompactionTimed(
-                model=Model.GEMINI_LITE.value,
+                model=SHORT_TERM_MEMORY_MODEL.value,
                 history_minutes=HISTORY_MINUTES,
                 min_keep_messages=MIN_RECENT_MESSAGES,
             ),

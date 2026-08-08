@@ -65,7 +65,10 @@ def create_conversation(conn: sqlite3.Connection) -> int:
     """Create a new conversation and return its ID."""
     cursor = conn.execute("INSERT INTO conversations DEFAULT VALUES")
     conn.commit()
-    return cursor.lastrowid
+    conversation_id = cursor.lastrowid
+    if conversation_id is None:
+        raise RuntimeError("SQLite did not return an ID for the new conversation.")
+    return conversation_id
 
 
 def save_messages(conn: sqlite3.Connection, conversation_id: int, messages_json: str) -> None:
@@ -80,7 +83,7 @@ def save_messages(conn: sqlite3.Connection, conversation_id: int, messages_json:
 def get_messages(conn: sqlite3.Connection, conversation_id: int) -> list[str]:
     """Retrieve all messages for a given conversation, ordered by insertion."""
     cursor = conn.execute(
-        "SELECT message_list FROM messages WHERE conversation_id = ? ORDER BY id ASC",
+        "SELECT message_list FROM messages WHERE conversation_id = ? ORDER BY id",
         (conversation_id,),
     )
     rows = cursor.fetchall()
@@ -114,7 +117,7 @@ def get_conversations_pending_memory(conn: sqlite3.Connection) -> list[sqlite3.R
         FROM conversations
         WHERE ended_at IS NOT NULL
           AND memory_analyzed_at IS NULL
-        ORDER BY id ASC
+        ORDER BY id
         """
     )
     return cursor.fetchall()

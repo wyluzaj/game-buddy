@@ -4,7 +4,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
 from buddy.agent import build_agent
+from buddy.config import SHORT_TERM_MEMORY_MODEL
 from buddy.long_term_memory import MEMORY_STORE_PATH, create_long_term_memory
+from buddy.timed_compaction import SummarizingCompactionTimed
 
 
 def test_long_term_memory_persists_between_store_instances(tmp_path):
@@ -34,3 +36,16 @@ def test_agent_contains_injected_memory_capability():
     agent = build_agent(TestModel(), memory=memory)
 
     assert memory in agent.root_capability.capabilities
+
+
+def test_agent_uses_configured_short_term_memory_model():
+    """Short-term summarization uses the model selected in project config."""
+    agent = build_agent(TestModel(), memory=Memory(InMemoryStore()))
+
+    short_term_memory = next(
+        capability
+        for capability in agent.root_capability.capabilities
+        if isinstance(capability, SummarizingCompactionTimed)
+    )
+
+    assert short_term_memory.model == SHORT_TERM_MEMORY_MODEL.value
