@@ -1,90 +1,229 @@
 # game-buddy
 
-Terminal chatbot for gaming discussions.
+Terminal AI companion for casual conversations while gaming. The agent uses Pydantic AI,
+keeps several layers of memory, compacts long conversations, can search the web, and
+optionally sends traces to Pydantic Logfire.
 
-Built with [Pydantic AI](https://pydantic.dev/docs/ai/) and Python 3.10+.
+## Features
+
+- Interactive model selection with same-tier fallback models.
+- Raw conversation persistence in SQLite.
+- Time-based short-term memory compaction with a recent-message floor.
+- Persistent long-term Harness Memory backed by SQLite.
+- Automatic consolidation of completed sessions into long-term memory.
+- Old tool-result cleanup with `ClearToolResults`.
+- DuckDuckGo search for questions the agent cannot answer reliably.
+- Optional Pydantic AI tracing with Logfire.
+
+## Memory and compaction
+
+The application uses three levels of conversation context:
+
+1. **Immediate memory** — the current session's processed Pydantic AI message history is
+   held in RAM and passed to the next agent run. Raw message batches are also written to
+   `data/chatbot.db`.
+2. **Short-term memory** — `SummarizingCompactionTimed`, a custom time-based variant of
+   Harness [`SummarizingCompaction`](https://pydantic.dev/docs/ai/harness/compaction/),
+   replaces expired messages with a structured summary. By default it keeps everything
+   from the last 30 minutes and always keeps at least 15 recent messages. Existing summaries
+   are updated incrementally using only newly expired messages.
+3. **Long-term memory** — Harness [`Memory`](https://pydantic.dev/docs/ai/harness/memory/)
+   stores a logical `main/MEMORY.md` notebook inside `data/memory.db`. Its bounded content is
+   injected into later model requests and remains available between application sessions.
+
+The long-term flow is:
+
+```text
+current chat
+  -> raw messages and final session snapshot in data/chatbot.db
+  -> session is marked as completed
+  -> next application startup analyzes unprocessed completed sessions
+  -> durable facts, preferences, goals, and decisions update main/MEMORY.md
+  -> Harness Memory injects the updated notebook into future requests
+```
+
+The long-term analyzer treats user statements as the source of facts. Assistant-only claims,
+greetings, temporary details, and empty sessions are not promoted to durable memory. A failed
+session remains pending so it can be retried without blocking later sessions.
+
+Raw history is intentionally **not restored as an active conversation after restarting the
+application**. Cross-session continuity comes from curated long-term memory. The raw database
+is retained for persistence and as a fallback source for memory analysis.
+
+### Tool-result compaction
+
+Harness `ClearToolResults` activates when the estimated history exceeds 50,000 tokens. It
+clears old tool outputs while preserving the three most recent tool-call/tool-return pairs.
+This reduces context usage without orphaning tool calls.
+
+### Timed compaction rules
+
+Before a model request, `SummarizingCompactionTimed`:
+
+- treats messages older than `HISTORY_MINUTES` as summary candidates;
+- treats a missing message timestamp as old;
+- clamps the cutoff so at least `MIN_RECENT_MESSAGES` remain unchanged;
+- moves the cutoff backward when necessary to preserve tool-call/tool-return integrity;
+- does nothing when no new expired messages need summarizing.
+
+The first user message is not specially preserved (`preserve_first_user_message=False`).
+
+## Web search
+
+The agent has Pydantic AI's `duckduckgo_search` tool. Its instructions tell it to search when
+it does not know a factual answer instead of guessing. DuckDuckGo search does not require a
+separate API key.
 
 ## Setup
 
-1. Clone the repository and enter the folder:
-   ```
+1. Clone the repository and enter the directory:
+
+   ```bash
    git clone <repo-url>
    cd game-buddy
    ```
 
 2. Create and activate a virtual environment:
-   ```
+
+   ```powershell
    python -m venv .venv
-   .venv\Scripts\activate         # Windows
-   source .venv/bin/activate      # Linux/Mac
+   .venv\Scripts\activate
    ```
 
-3. Install the package (editable) with dev tools:
-   ```
-   pip install -e ".[dev]"
-   ```
-   This registers `buddy` as an importable package and installs pytest.
+   Linux and macOS:
 
-4. Copy the env template and fill in your API keys:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
    ```
-   copy .env.example .env         # Windows
-   cp .env.example .env           # Linux/Mac
+
+3. Install the application with development dependencies:
+
+   ```bash
+   python -m pip install -e ".[dev]"
    ```
-   Get the keys from:
+
+4. Copy the environment template and add provider keys:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+   Linux and macOS:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Get keys from:
+
    - [Google AI Studio](https://aistudio.google.com/apikey)
    - [OpenRouter](https://openrouter.ai/keys)
 
-5. Run the chatbot (from the repo root):
-   ```
+   `GOOGLE_API_KEY` is required by the default chat model and by the configured short- and
+   long-term memory models. `OPENROUTER_API_KEY` is required when an OpenRouter model or
+   fallback is used.
+
+5. Run the application:
+
+   ```bash
    python -m buddy.main
    ```
-   or, if the console script was installed:
-   ```
+
+   The installed console entry point is equivalent:
+
+   ```bash
    buddy
    ```
-   On first run, a `data/chatbot.db` file will be created to persist conversations.
 
-## Models
+The application creates `data/chatbot.db` and `data/memory.db` automatically. Both contain
+local user data and are ignored by Git.
 
-The default configuration in `buddy/config.py` uses free-tier models from two providers:
+## Models and configuration
 
-- **Google AI Studio** — Gemini 3.5 Flash (`high` tier), Gemini 3.1 Flash Lite (`medium` tier)
-- **OpenRouter** — GPT-OSS 120B free (`medium` tier), GPT-OSS 20B free (`low` tier)
+The current model catalog is defined in `buddy/config.py`:
 
-Both API keys (`GOOGLE_API_KEY`, `OPENROUTER_API_KEY`) are required — each authorizes
-its own provider.
+| Role | Default |
+| --- | --- |
+| Main chat model | `google:gemini-3.5-flash` |
+| Short-term summarizer | `google:gemini-3.1-flash-lite` |
+| Long-term memory analyzer | `google:gemini-3.1-flash-lite` |
 
-Models with peers in the same tier automatically fall back to each other on API errors
-(rate-limits, 5xx). Models alone in a tier have no fallback.
+Available chat models also include Gemini 3.1 Flash Lite and the OpenRouter-hosted free
+GPT-OSS 120B and 20B models. Models sharing a tier are configured as fallbacks for one
+another; models that are alone in a tier have no fallback.
 
-To use different providers or paid models, edit the `Model` enum and `MODEL_TIERS`
-dict in `buddy/config.py`. Any model string supported by Pydantic AI works — see the
-[supported providers](https://pydantic.dev/docs/ai/models/overview/) list.
+Important settings:
+
+| Setting | Default | Purpose |
+| --- | ---: | --- |
+| `HISTORY_MINUTES` | `30` | Time window preserved as raw short-term context |
+| `MIN_RECENT_MESSAGES` | `15` | Minimum number of recent messages kept unchanged |
+| `SHORT_TERM_MEMORY_MODEL` | Gemini 3.1 Flash Lite | Model generating timed summaries |
+| `LONG_TERM_MEMORY_MODEL` | Gemini 3.1 Flash Lite | Model curating durable memory |
+| `MEMORY_DATABASE_PATH` | `data/memory.db` | Harness Memory SQLite store |
+
+Prompts and model instructions are centralized in `buddy/prompts.py`.
+
+## Optional Logfire tracing
+
+The application always instruments Pydantic AI, but exports traces only when a Logfire token
+is available:
+
+```python
+logfire.configure(send_to_logfire="if-token-present")
+logfire.instrument_pydantic_ai()
+```
+
+The application works normally without a Logfire account. To enable tracing, configure your
+own Logfire project with the [Logfire CLI](https://logfire.pydantic.dev/docs/reference/cli/)
+or provide `LOGFIRE_TOKEN` as an environment variable. Local `.logfire` credentials and
+`.env` are not committed.
+
+## Storage
+
+| Path | Contents |
+| --- | --- |
+| `data/chatbot.db` | Conversations, raw Pydantic AI message batches, completed-session snapshots, and memory-analysis status |
+| `data/memory.db` | Harness SQLite memory store containing the logical `main/MEMORY.md` notebook |
+
+`MEMORY.md` is a logical Harness memory path stored in SQLite; it is not a standalone Markdown
+file in the repository.
 
 ## Running tests
 
-From the repo root:
+Run the complete suite from the repository root:
+
+```bash
+python -m pytest -q
 ```
-pytest -v
-```
+
+The tests cover model fallback selection, database persistence and migration, timed
+compaction rules, incremental summaries, Harness memory persistence and injection, and
+completed-session consolidation.
 
 ## Project structure
 
-```
+```text
 game-buddy/
-├── buddy/                    # Application package
-│   ├── __init__.py
-│   ├── config.py             # Model enum, tier map, history filter settings
-│   ├── database.py           # SQLite: conversations + messages tables
-│   ├── agent.py              # Pydantic AI Agent + keep_recent history processor
-│   └── main.py               # Terminal loop, glues everything together
-├── tests/                    # pytest suite (in-memory sqlite, monkeypatched config)
-│   ├── conftest.py           # Shared `db` fixture
-│   ├── test_config.py        # build_model + tier fallback logic
-│   ├── test_database.py      # SQL round-trip and conversation isolation
-│   └── test_agent.py         # keep_recent floor / passthrough behaviour
-├── pyproject.toml            # Package metadata, dependencies, pytest config
-├── README.md
-├── .env.example              # Template for API keys (never commit real .env)
-└── .gitignore
+├── buddy/
+│   ├── agent.py               # Agent, capabilities, and DuckDuckGo tool
+│   ├── config.py              # Models and memory/compaction settings
+│   ├── database.py            # Raw conversations and session-state SQLite access
+│   ├── long_term_memory.py    # Harness Memory with a SQLite store
+│   ├── main.py                # Terminal loop, startup consolidation, and Logfire
+│   ├── memory_analysis.py     # Completed-session long-term memory curator
+│   ├── prompts.py             # Centralized prompts and model instructions
+│   └── timed_compaction.py    # Custom time-based summarizing compaction
+├── tests/
+│   ├── conftest.py
+│   ├── test_agent.py
+│   ├── test_config.py
+│   ├── test_database.py
+│   ├── test_long_term_memory.py
+│   └── test_memory_analysis.py
+├── data/                      # Runtime SQLite databases (ignored by Git)
+├── .env.example
+├── pyproject.toml
+└── README.md
 ```
