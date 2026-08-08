@@ -24,6 +24,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from buddy.prompts import (
+    SHORT_TERM_MEMORY_SUMMARIZER_INSTRUCTIONS,
+    SHORT_TERM_MEMORY_SUMMARY_PROMPT,
+)
+
 # Harness does not expose the cutoff and tracing helpers through its public API.
 # This capability intentionally mirrors Harness SummarizingCompaction and therefore
 # depends on the same internal helpers as the upstream implementation.
@@ -38,39 +43,6 @@ from pydantic_ai_harness.compaction._shared import (
 if TYPE_CHECKING:
     from pydantic_ai.models import Model, ModelRequestContext
 
-
-_GAMING_SUMMARY_PROMPT = """\
-Jesteś asystentem streszczającym rozmowy podczas grania. Dotychczasowa rozmowa zostanie \
-zastąpiona twoim streszczeniem, więc musi zawierać wszystko potrzebne żeby \
-kontynuować rozmowę w naturalny sposób.
-
-Napisz streszczenie pod tymi dokładnymi nagłówkami, pomijając sekcję tylko \
-jeśli nie ma treści:
-
-## O czym rozmawialiśmy
-Główny temat, ton rozmowy, nastrój usera.
-
-## Co się działo w grze
-Wydarzenia, walki, odkrycia, momenty które user wspominał albo które \
-były kontekstem rozmowy.
-
-## Emocje i reakcje
-Frustracje, radości, obserwacje, komentarze — nastrój i stan emocjonalny.
-
-## Styl gry i preferencje
-Co user powiedział o swoim stylu, preferencjach, decyzjach w grze.
-
-## Otwarte tematy
-Rzeczy o których planowaliśmy pogadać dalej, niedokończone tematy.
-
-Skup się na kontekście i tym co ważne, nie na dokładnym powtarzaniu tego \
-co zostało powiedziane. Odpowiedz TYLKO streszczeniem — bez wstępu, bez \
-markdown fences.
-
-<messages>
-{messages}
-</messages>\
-"""
 
 _SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
 _MEMORY_METADATA_PREFIX = 'pydantic-ai-harness.memory.v1:'
@@ -235,7 +207,7 @@ class SummarizingCompactionTimed(AbstractCapability[AgentDepsT]):
     min_keep_messages: int = 15
     """Floor on tail size; at least this many recent messages are always preserved."""
 
-    summary_prompt: str = _GAMING_SUMMARY_PROMPT
+    summary_prompt: str = SHORT_TERM_MEMORY_SUMMARY_PROMPT
     """Prompt template for generating summaries. Must contain a ``{messages}`` placeholder."""
 
     preserve_first_user_message: bool = False
@@ -353,7 +325,7 @@ class SummarizingCompactionTimed(AbstractCapability[AgentDepsT]):
             model=model,
             deps_type=type(None),
             output_type=str,
-            instructions='You are a context summarization assistant. Extract the most important information from conversations.',
+            instructions=SHORT_TERM_MEMORY_SUMMARIZER_INSTRUCTIONS,
         )
         result = await agent.run(prompt, usage=ctx.usage)
         return result.output.strip()
