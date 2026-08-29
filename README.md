@@ -2,7 +2,8 @@
 
 Terminal AI companion for casual conversations while gaming. The agent uses Pydantic AI,
 keeps several layers of memory, compacts long conversations, can search the web, and
-optionally sends traces to Pydantic Logfire.
+can turn recorded gameplay into source-linked context. It optionally sends traces to
+Pydantic Logfire.
 
 ## Features
 
@@ -11,6 +12,11 @@ optionally sends traces to Pydantic Logfire.
 - Time-based short-term memory compaction with a recent-message floor.
 - Persistent long-term Harness Memory backed by SQLite.
 - Automatic consolidation of completed sessions into long-term memory.
+- Searchable session reports and game-specific memory profiles.
+- Source-aware memory recall reduced by a dedicated Context Butler.
+- Gemini overview and on-demand detailed analysis of local gameplay clips.
+- Bounded Video Context Butler state injected into the correct chat session.
+- Video observations preserved in session reports and game-specific memory.
 - Same-tier fallback models for chat, short-term summarization, and long-term analysis.
 - Old tool-result cleanup with `ClearToolResults`.
 - DuckDuckGo search for questions the agent cannot answer reliably.
@@ -41,8 +47,11 @@ current chat
   -> raw messages and final session snapshot in data/chatbot.db
   -> session is marked as completed
   -> next application startup analyzes unprocessed completed sessions
-  -> durable facts, preferences, goals, and decisions update main/MEMORY.md
-  -> Harness Memory injects the updated notebook into future requests
+  -> global durable facts update main/MEMORY.md
+  -> detailed reports remain under main/sessions/session-<id>.md
+  -> game-specific progress and goals update main/games/<game>.md
+  -> a SQLite index links sessions to their game profiles
+  -> Harness injects bounded global memory; recall_memory retrieves older detail
 ```
 
 The long-term analyzer treats user statements as the source of facts. Assistant-only claims,
@@ -51,6 +60,58 @@ session remains pending so it can be retried without blocking later sessions.
 
 The raw database
 is retained for persistence and as a fallback source for memory analysis.
+
+## Gameplay video analysis
+
+Video support has two analysis modes:
+
+1. **Overview** uploads a completed local clip to Gemini and stores a structured report
+   containing a summary, timestamped events, visible text, confidence, and uncertainties.
+2. **Detail** is invoked by the main agent only when the user asks about a specific visual
+   or audible detail and a `video://segment/...` source is available. It re-reads the
+   requested clip or timestamp range and persists the question-specific answer.
+
+The overview flow is:
+
+```text
+local clip
+  -> video_segments metadata in data/chatbot.db
+  -> Gemini VideoOverview in video_reports
+  -> Video Context Butler replacement snapshot in video_context_updates
+  -> next run of the matching conversation receives one explicit screen observation
+  -> successful injection sets injected_at
+```
+
+The Butler keeps a single replacement state instead of appending every clip. Ordinary
+movement and duplicate observations can produce `changed=false`. Timestamped source links
+are generated and validated by the application; the model cannot invent arbitrary local
+paths. The `analyze_video_detail` tool accepts only application-owned
+`video://segment/<id>` URIs and caches identical question/range reports.
+
+Important video observations are added to the completed session report with their source
+URIs. They may update the profile of a game explicitly associated with the conversation,
+but they are not treated as user statements and cannot create global facts in `MEMORY.md`.
+
+### Manual video flow
+
+Start a chat and send one message so the conversation exists. In another terminal, obtain
+the active ID:
+
+```powershell
+python -c "import sqlite3; c=sqlite3.connect('data/chatbot.db'); print(c.execute('SELECT id FROM conversations WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1').fetchone())"
+```
+
+Analyze a completed recording and associate it with that conversation:
+
+```powershell
+python -m buddy.video_cli "C:\path\to\recording.mp4" --duration-seconds 120 --conversation-id 1
+```
+
+The next user turn receives the compact observed-game state. If the user asks for a detail
+and the state contains a source URI, the agent can call `analyze_video_detail` automatically.
+
+Automatic window-specific recording, segmentation, and time-driven agent rounds are not
+part of this branch; they belong to the follow-up capture/automation task.
 
 ### Tool-result compaction
 
@@ -146,15 +207,16 @@ The current model catalog is defined in `buddy/config.py`:
 
 | Role | Primary/default | Fallback |
 | --- | --- | --- |
-| Main chat model | `google:gemini-3.5-flash` | None for the default `high` tier; selected models use a same-tier peer when available |
-| Short-term summarizer | `google:gemini-3.1-flash-lite` | `openrouter:openai/gpt-oss-120b:free` |
-| Long-term memory analyzer | `google:gemini-3.1-flash-lite` | `openrouter:openai/gpt-oss-120b:free` |
+| Main chat model | `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free` | Other configured models in the `high` tier |
+| Short-term summarizer | `google:gemini-3.1-flash-lite` | Other configured models in the `medium` tier |
+| Long-term and game-memory analyzers | `google:gemini-3.1-flash-lite` | Other configured models in the `medium` tier |
+| Memory and video Context Butlers | `google:gemini-3.1-flash-lite` | Other configured models in the `medium` tier |
+| Native overview/detail video analysis | `gemini-3.1-flash-lite` | Provider errors are surfaced for retry; no cross-provider video fallback |
 
-Available chat models also include Gemini 3.1 Flash Lite and the OpenRouter-hosted free
-GPT-OSS 120B and 20B models. The main chat, short-term summarizer, and long-term analyzer all
-use the shared `build_model()` function. It preserves the configured model as primary and
-adds other models from the same tier as ordered fallbacks. Models alone in a tier have no
-fallback.
+The main chat and text analyzers use the shared `build_model()` function. It preserves the
+configured model as primary and adds other models from the same tier as ordered fallbacks.
+Native Gemini video upload/generation uses `google-genai` directly and is retried by the
+application workflow instead of falling back to a text-only provider.
 
 Important settings:
 
@@ -164,6 +226,10 @@ Important settings:
 | `MIN_RECENT_MESSAGES` | `15` | Minimum number of recent messages kept unchanged |
 | `SHORT_TERM_MEMORY_MODEL` | Gemini 3.1 Flash Lite | Model generating timed summaries |
 | `LONG_TERM_MEMORY_MODEL` | Gemini 3.1 Flash Lite | Model curating durable memory |
+| `CONTEXT_BUTLER_MODEL` | Gemini 3.1 Flash Lite | Model reducing recalled documents |
+| `VIDEO_OVERVIEW_MODEL` | Gemini 3.1 Flash Lite | Native fast clip analysis |
+| `VIDEO_DETAIL_MODEL` | Gemini 3.1 Flash Lite | Native question-specific clip analysis |
+| `VIDEO_CONTEXT_BUTLER_MODEL` | Gemini 3.1 Flash Lite | Model maintaining bounded current gameplay state |
 | `MEMORY_DATABASE_PATH` | `data/memory.db` | Harness Memory SQLite store |
 
 Prompts and model instructions are centralized in `buddy/prompts.py`.
@@ -187,8 +253,9 @@ or provide `LOGFIRE_TOKEN` as an environment variable. Local `.logfire` credenti
 
 | Path | Contents |
 | --- | --- |
-| `data/chatbot.db` | Conversations, raw Pydantic AI message batches, completed-session snapshots, and memory-analysis status |
-| `data/memory.db` | Harness SQLite memory store containing the logical `main/MEMORY.md` notebook |
+| `data/chatbot.db` | Conversations, raw messages, memory index/relations, video segment metadata, overview/detail reports, and compact video-context updates |
+| `data/memory.db` | Harness SQLite store containing logical `main/MEMORY.md`, `main/sessions/*.md`, and `main/games/*.md` documents |
+| Local recording path | Original video bytes; the database stores the normalized path and stable `video://` ID, not the video blob |
 
 `MEMORY.md` is a logical Harness memory path stored in SQLite; it is not a standalone Markdown
 file in the repository.
@@ -201,23 +268,30 @@ Run the complete suite from the repository root:
 python -m pytest -q
 ```
 
-The tests cover model fallback selection, database persistence and migration, timed
-compaction rules, incremental summaries, Harness memory persistence and injection, and
-completed-session consolidation.
+The tests cover model fallback selection, database migrations, timed compaction, Harness
+memory, session/game indexing and recall, provider cleanup, idempotent video analysis,
+source validation, context replacement/injection, and detailed video report caching.
 
 ## Project structure
 
 ```text
 game-buddy/
 ├── buddy/
-│   ├── agent.py               # Agent, capabilities, and DuckDuckGo tool
+│   ├── agent.py               # Agent, capabilities, search, recall, and video tools
 │   ├── config.py              # Models and memory/compaction settings
 │   ├── database.py            # Raw conversations and session-state SQLite access
 │   ├── long_term_memory.py    # Harness Memory with a SQLite store
 │   ├── main.py                # Terminal loop, startup consolidation, and Logfire
 │   ├── memory_analysis.py     # Completed-session long-term memory curator
+│   ├── memory_index.py        # Session/game search index and relations
+│   ├── memory_recall.py       # Bounded historical recall with Context Butler
 │   ├── prompts.py             # Centralized prompts and model instructions
-│   └── timed_compaction.py    # Custom time-based summarizing compaction
+│   ├── timed_compaction.py    # Custom time-based summarizing compaction
+│   ├── video_cli.py           # Manual end-to-end clip analysis command
+│   ├── video_pipeline.py      # Overview -> Video Context Butler orchestration
+│   ├── video_storage.py       # Video metadata and reports in SQLite
+│   ├── video_context_*.py     # Bounded state selection and chat injection
+│   └── video_detail_*.py      # On-demand detail service and agent tool
 ├── tests/
 │   ├── conftest.py
 │   ├── test_agent.py

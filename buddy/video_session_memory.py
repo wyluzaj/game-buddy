@@ -25,7 +25,15 @@ def build_session_video_observations(
         if update.uncertainty:
             block += f"\n  Uncertainty: {update.uncertainty}"
         blocks.append(block)
-    rendered = "\n".join(blocks)
-    if len(rendered) <= MAX_SESSION_VIDEO_OBSERVATIONS_CHARS:
-        return rendered
-    return rendered[-MAX_SESSION_VIDEO_OBSERVATIONS_CHARS:]
+    selected: list[str] = []
+    selected_chars = 0
+    for block in reversed(blocks):
+        separator_chars = 1 if selected else 0
+        if (
+            selected_chars + separator_chars + len(block)
+            > MAX_SESSION_VIDEO_OBSERVATIONS_CHARS
+        ):
+            break
+        selected.append(block)
+        selected_chars += separator_chars + len(block)
+    return "\n".join(reversed(selected))

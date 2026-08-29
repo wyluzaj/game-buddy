@@ -1,6 +1,7 @@
 """Gemini Files API implementation of the provider-neutral video analyzer."""
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Protocol, TypeVar, cast
 
@@ -124,7 +125,7 @@ class GeminiVideoAnalyzer:
     ) -> VideoDetailAnalysis:
         """Closely inspect one caller-selected range of a local segment."""
         request = VIDEO_DETAIL_REQUEST.format(
-            question=question,
+            question_json=json.dumps(question, ensure_ascii=False),
             start_seconds=start_seconds,
             end_seconds=end_seconds,
         )

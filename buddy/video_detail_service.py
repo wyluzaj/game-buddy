@@ -177,7 +177,13 @@ def _answer_from_report(
 ) -> VideoDetailAnswer:
     try:
         analysis = VideoDetailAnalysis.model_validate(report.content)
-        sources = [str(source) for source in report.content["sources"]]
+        raw_sources = report.content["sources"]
+        if not isinstance(raw_sources, list) or not all(
+            isinstance(source, str) and source.startswith("video://segment/")
+            for source in raw_sources
+        ):
+            raise ValueError("Detailed report sources are invalid.")
+        sources = list(dict.fromkeys(raw_sources))
     except (KeyError, TypeError, ValidationError, ValueError) as exc:
         raise VideoDetailStateError(
             f"Detailed video report {report.id} is invalid."

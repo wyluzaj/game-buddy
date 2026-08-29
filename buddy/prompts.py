@@ -38,10 +38,10 @@ wprost w answer oraz uncertainties. Nie udzielaj porad niezwiązanych z pytaniem
 
 
 VIDEO_DETAIL_REQUEST = """
-Pytanie użytkownika:
-<question>
-{question}
-</question>
+Pytanie użytkownika jako literał JSON:
+<question_json>
+{question_json}
+</question_json>
 
 Przeanalizuj dokładnie zakres od {start_seconds:.3f} do {end_seconds:.3f} sekundy
 całego klipu. Zwróć bezpośrednią odpowiedź, dowody z timestampami oraz
