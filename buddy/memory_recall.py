@@ -7,8 +7,16 @@ import sqlite3
 from typing import Awaitable, Callable
 
 from pydantic import BaseModel
+from pydantic_ai import RunContext, RunUsage
 from pydantic_ai_harness.memory import Memory
 
+from buddy.context_butler import (
+    ContextButler,
+    ContextButlerResult,
+    build_context_butler,
+    build_memory_context_prompt,
+    validate_butler_sources,
+)
 from buddy.game_memory import game_memory_path
 from buddy.memory_index import (
     MemoryDocument,
@@ -220,37 +228,102 @@ class MemoryRecallService:
         )
 
 
-RecallMemoryTool = Callable[..., Awaitable[MemoryRecallResult]]
+class MemoryRecallCoordinator:
+    """Retrieve bounded documents and delegate their reduction to a cheap model."""
 
+    def __init__(
+        self,
+        service: MemoryRecallService,
+        context_butler: ContextButler,
+    ):
+        self._service = service
+        self._context_butler = context_butler
 
-def create_recall_memory_tool(
-    conn: sqlite3.Connection,
-    memory: Memory,
-) -> RecallMemoryTool:
-    """Create a Pydantic AI tool bound to this process's stores."""
-    service = MemoryRecallService(conn, memory)
-
-    async def recall_memory(
+    async def recall(
+        self,
+        *,
+        question: str,
         query: str | None = None,
         game: str | None = None,
         memory_type: MemoryRecallType = MemoryRecallType.ALL,
         date_from: str | None = None,
         date_to: str | None = None,
         limit: int = 3,
-    ) -> MemoryRecallResult:
-        """Recall prior game/session memory.
+        usage: RunUsage | None = None,
+    ) -> ContextButlerResult:
+        """Return only compact, source-validated evidence to the parent agent."""
+        normalized_question = question.strip()
+        if not normalized_question:
+            raise ValueError("question must not be empty.")
 
-        Use short distinctive keywords rather than a full natural-language question.
-        `game` should be a title explicitly known from the conversation. Dates use
-        YYYY-MM-DD and are inclusive. Results and document excerpts are bounded.
-        """
-        return await service.recall(
+        recalled = await self._service.recall(
             query=query,
             game=game,
             memory_type=memory_type,
             date_from=date_from,
             date_to=date_to,
             limit=limit,
+        )
+        if not recalled.matches:
+            return ContextButlerResult(
+                enough_evidence=False,
+                context="",
+                sources=[],
+                uncertainty=recalled.message,
+            )
+
+        prompt = build_memory_context_prompt(
+            normalized_question,
+            recalled.model_dump_json(indent=2),
+        )
+        analyzed = await self._context_butler.run(prompt, usage=usage)
+        return validate_butler_sources(
+            analyzed.output,
+            allowed_sources={match.path for match in recalled.matches},
+        )
+
+
+RecallMemoryTool = Callable[..., Awaitable[ContextButlerResult]]
+
+
+def create_recall_memory_tool(
+    conn: sqlite3.Connection,
+    memory: Memory,
+    context_butler: ContextButler | None = None,
+) -> RecallMemoryTool:
+    """Create a Pydantic AI tool bound to this process's stores."""
+    service = MemoryRecallService(conn, memory)
+    coordinator = MemoryRecallCoordinator(
+        service,
+        context_butler or build_context_butler(),
+    )
+
+    async def recall_memory(
+        ctx: RunContext,
+        question: str,
+        query: str | None = None,
+        game: str | None = None,
+        memory_type: MemoryRecallType = MemoryRecallType.ALL,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 3,
+    ) -> ContextButlerResult:
+        """Recall and reduce prior game/session memory for one question.
+
+        `question` is the user's complete information need. Use short distinctive
+        keywords in `query`. `game` should be a title explicitly known from the
+        conversation. Dates use YYYY-MM-DD and are inclusive. Only compact,
+        source-validated evidence is returned to the parent agent.
+        """
+        return await coordinator.recall(
+            question=question,
+            query=query,
+            game=game,
+            memory_type=memory_type,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            usage=ctx.usage,
         )
 
     return recall_memory
