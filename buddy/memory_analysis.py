@@ -35,7 +35,15 @@ class MemoryAnalysisResult(BaseModel):
 
     changed: bool
     memory_markdown: str
-    mentioned_games: list[str] = Field(default_factory=list, max_length=8)
+    games_with_user_state: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "Games for which the user explicitly provided their own gameplay "
+            "state, progress, preference, event, or goal. Questions alone do "
+            "not qualify."
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +51,7 @@ class AppliedMemoryAnalysis:
     """Persisted global-memory result plus explicit games found in the session."""
 
     changed: bool
-    mentioned_games: list[str]
+    games_with_user_state: list[str]
 
 
 class MemoryAnalyzerRunResult(Protocol):
@@ -67,6 +75,7 @@ class MemoryProcessingReport:
     updated: int = 0
     game_profiles_updated: int = 0
     failed_conversation_ids: list[int] = field(default_factory=list)
+    failure_reasons: dict[int, str] = field(default_factory=dict)
 
 
 def build_memory_analyzer(
@@ -74,11 +83,41 @@ def build_memory_analyzer(
 ) -> Agent[None, MemoryAnalysisResult]:
     """Build the dedicated agent that curates completed session memory."""
     analyzer_model = model if model is not None else build_model(LONG_TERM_MEMORY_MODEL)
-    return Agent[None, MemoryAnalysisResult](
+    analyzer = Agent[None, MemoryAnalysisResult](
         model=analyzer_model,
         deps_type=type(None),
         instructions=LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
         output_type=MemoryAnalysisResult,
+    )
+    analyzer.output_validator(sanitize_global_memory_scope)
+    return analyzer
+
+
+def sanitize_global_memory_scope(
+    analysis: MemoryAnalysisResult,
+) -> MemoryAnalysisResult:
+    """Remove model-proposed global-memory lines tied to detected games."""
+    game_names = [
+        game.strip().casefold()
+        for game in analysis.games_with_user_state
+        if game.strip()
+    ]
+    if not game_names:
+        return analysis
+
+    kept_lines = [
+        line
+        for line in analysis.memory_markdown.splitlines()
+        if not any(game_name in line.casefold() for game_name in game_names)
+    ]
+    cleaned_memory = "\n".join(kept_lines).strip()
+    if cleaned_memory == analysis.memory_markdown.strip():
+        return analysis
+    return analysis.model_copy(
+        update={
+            "changed": analysis.changed and bool(cleaned_memory),
+            "memory_markdown": cleaned_memory,
+        }
     )
 
 
@@ -127,13 +166,13 @@ async def _apply_long_term_memory(
     """Run one analysis and expose both global changes and mentioned games."""
     session_context = session_context.strip()
     if not session_context:
-        return AppliedMemoryAnalysis(changed=False, mentioned_games=[])
+        return AppliedMemoryAnalysis(changed=False, games_with_user_state=[])
     evidence = user_evidence_context or session_context
     if not any(
         line.lstrip().startswith("User:")
         for line in evidence.splitlines()
     ):
-        return AppliedMemoryAnalysis(changed=False, mentioned_games=[])
+        return AppliedMemoryAnalysis(changed=False, games_with_user_state=[])
 
     memory_file = await memory.store.read(MEMORY_STORE_PATH, max_chars=100_000)
     current_memory = memory_file.content if memory_file is not None else ""
@@ -144,16 +183,16 @@ async def _apply_long_term_memory(
     )
 
     result = await analyzer.run(prompt)
-    analysis = result.output
-    mentioned_games = [
+    analysis = sanitize_global_memory_scope(result.output)
+    games_with_user_state = [
         name.strip()
-        for name in analysis.mentioned_games
+        for name in analysis.games_with_user_state
         if name.strip()
     ]
     if not analysis.changed:
         return AppliedMemoryAnalysis(
             changed=False,
-            mentioned_games=mentioned_games,
+            games_with_user_state=games_with_user_state,
         )
 
     updated_memory = analysis.memory_markdown.strip()
@@ -162,7 +201,7 @@ async def _apply_long_term_memory(
     if updated_memory == current_memory.strip():
         return AppliedMemoryAnalysis(
             changed=False,
-            mentioned_games=mentioned_games,
+            games_with_user_state=games_with_user_state,
         )
 
     await memory.store.write(
@@ -172,7 +211,7 @@ async def _apply_long_term_memory(
     )
     return AppliedMemoryAnalysis(
         changed=True,
-        mentioned_games=mentioned_games,
+        games_with_user_state=games_with_user_state,
     )
 
 
@@ -236,12 +275,12 @@ async def process_pending_memories(
                 session_context,
                 user_evidence_context=raw_context or session_context,
             )
-            if session_document is not None and applied.mentioned_games:
+            if session_document is not None and applied.games_with_user_state:
                 game_documents = await link_session_to_games(
                     conn,
                     memory,
                     session_document=session_document,
-                    game_names=applied.mentioned_games,
+                    game_names=applied.games_with_user_state,
                 )
                 if game_analyzer is not None:
                     report.game_profiles_updated += await update_game_profiles(
@@ -249,7 +288,6 @@ async def process_pending_memories(
                         game_analyzer,
                         memory,
                         game_documents=game_documents,
-                        session_context=session_context,
                         user_evidence_context=raw_context or session_context,
                     )
             mark_memory_analyzed(conn, conversation_id)
@@ -258,7 +296,10 @@ async def process_pending_memories(
                 report.updated += 1
         # One broken session must stay pending without blocking later sessions.
         # noinspection PyBroadException
-        except Exception:
+        except Exception as error:
             report.failed_conversation_ids.append(conversation_id)
+            report.failure_reasons[conversation_id] = (
+                f"{type(error).__name__}: {error}"
+            )
 
     return report

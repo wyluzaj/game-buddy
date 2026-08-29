@@ -167,9 +167,12 @@ def test_context_butler_uses_explicit_configured_model(monkeypatch):
 
     assert isinstance(butler.model, FallbackModel)
     expected_models = [
+        CONTEXT_BUTLER_MODEL.value.split(":", 1)[1]
+    ] + [
         model.value.split(":", 1)[1]
         for model, tier in MODEL_TIERS.items()
         if tier == MODEL_TIERS[CONTEXT_BUTLER_MODEL]
+        and model is not CONTEXT_BUTLER_MODEL
     ]
     assert [model.model_name for model in butler.model.models] == expected_models
 

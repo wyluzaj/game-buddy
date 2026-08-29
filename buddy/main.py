@@ -55,8 +55,15 @@ def main():
                     f"game profiles updated {report.game_profiles_updated}."
                 )
             if report.failed_conversation_ids:
-                failed = ", ".join(map(str, report.failed_conversation_ids))
-                print(f"[Memory analysis failed for conversation(s): {failed}]")
+                for conversation_id in report.failed_conversation_ids:
+                    reason = report.failure_reasons.get(
+                        conversation_id,
+                        "unknown error",
+                    )
+                    print(
+                        "[Memory analysis failed for conversation "
+                        f"{conversation_id}: {reason}]"
+                    )
         except Exception as error:
             print(f"[Memory analysis unavailable: {error}]")
 

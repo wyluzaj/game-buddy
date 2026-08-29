@@ -10,7 +10,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
-from buddy.config import LONG_TERM_MEMORY_MODEL, Model
+from buddy.config import LONG_TERM_MEMORY_MODEL, MODEL_TIERS
 from buddy.database import create_conversation, finish_conversation, save_messages
 from buddy.game_memory import game_memory_path
 from buddy.game_memory_analysis import (
@@ -24,6 +24,7 @@ from buddy.memory_analysis import (
     build_memory_analysis_prompt,
     process_pending_memories,
     update_long_term_memory,
+    sanitize_global_memory_scope,
 )
 from buddy.memory_index import (
     MemoryDocumentType,
@@ -78,6 +79,33 @@ class FailingThenUnchangedAnalyzer:
         )
 
 
+def test_global_memory_removes_detected_game_specific_lines():
+    analysis = MemoryAnalysisResult(
+        changed=True,
+        memory_markdown=(
+            "- Nie lubi spoilerów.\n"
+            "- W Elden Ring gra magiem i chce wrócić do zielonej wieży."
+        ),
+        games_with_user_state=["Elden Ring"],
+    )
+
+    sanitized = sanitize_global_memory_scope(analysis)
+
+    assert sanitized.changed is True
+    assert sanitized.memory_markdown == "- Nie lubi spoilerów."
+    assert sanitized.games_with_user_state == ["Elden Ring"]
+
+
+def test_global_memory_accepts_global_facts_with_separate_game_detection():
+    analysis = MemoryAnalysisResult(
+        changed=True,
+        memory_markdown="- Nie lubi spoilerów dotyczących bossów.",
+        games_with_user_state=["Elden Ring"],
+    )
+
+    assert sanitize_global_memory_scope(analysis) is analysis
+
+
 def test_memory_analyzer_uses_configured_long_term_fallback(monkeypatch):
     """The analyzer uses its configured model and same-tier fallback."""
     monkeypatch.setenv("GOOGLE_API_KEY", "fake")
@@ -88,8 +116,12 @@ def test_memory_analyzer_uses_configured_long_term_fallback(monkeypatch):
     assert isinstance(analyzer.model, FallbackModel)
     used_names = [model.model_name for model in analyzer.model.models]
     assert used_names == [
-        LONG_TERM_MEMORY_MODEL.value.split(":", 1)[1],
-        Model.OPENAI.value.split(":", 1)[1],
+        LONG_TERM_MEMORY_MODEL.value.split(":", 1)[1]
+    ] + [
+        model.value.split(":", 1)[1]
+        for model, tier in MODEL_TIERS.items()
+        if tier == MODEL_TIERS[LONG_TERM_MEMORY_MODEL]
+        and model is not LONG_TERM_MEMORY_MODEL
     ]
 
 
@@ -303,7 +335,11 @@ def test_compacted_session_links_all_explicit_games_from_raw_user_messages(db):
         MemoryAnalysisResult(
             changed=False,
             memory_markdown="",
-            mentioned_games=["Elden Ring", "elden ring", "Cyberpunk 2077"],
+            games_with_user_state=[
+                "Elden Ring",
+                "elden ring",
+                "Cyberpunk 2077",
+            ],
         )
     )
     game_analyzer = StubGameAnalyzer(
@@ -383,6 +419,9 @@ def test_failed_session_stays_pending_and_does_not_block_next_session(db):
     assert report.processed == 1
     assert report.updated == 0
     assert report.failed_conversation_ids == [failed_id]
+    assert report.failure_reasons == {
+        failed_id: "RuntimeError: temporary model failure"
+    }
     assert rows[0]["memory_analyzed_at"] is None
     assert rows[1]["memory_analyzed_at"] is not None
 
