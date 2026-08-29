@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Terminal chatbot for gaming discussions, built with Pydantic AI"
 requires-python = ">=3.10"
 dependencies = [
+    "google-genai>=2.10.0,<3.0.0",
     "logfire[httpx]>=4.16.0,<5.0.0",
     "pydantic>=2.10.0,<3.0.0",
     "pydantic-ai-slim[duckduckgo,google,openrouter]>=2.22.0,<2.23.0",
