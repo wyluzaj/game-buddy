@@ -1,9 +1,7 @@
 # Project Map
 
 This document maps the production modules, runtime flows, storage layers, and tests of
-`game-buddy`. It describes the current implementation on the `fix/codebase-hardening`
-branch. Automatic game-window recording and autonomous time-driven agent rounds are not
-implemented yet.
+`game-buddy`.
 
 ## Runtime flows
 
