@@ -227,7 +227,7 @@ def test_pending_session_updates_memory_and_is_marked_analyzed(db):
     assert memory_file is not None
     assert "nie lubi spoilerów" in memory_file.content
     assert session_file is not None
-    assert "## Raport sesji" in session_file.content
+    assert "## Session Report" in session_file.content
     assert "User: Nie lubię spoilerów." in session_file.content
     assert indexed_session is not None
     assert indexed_session.conversation_id == conversation_id
