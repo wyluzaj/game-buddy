@@ -2,6 +2,7 @@
 import sqlite3
 from pathlib import Path
 
+from buddy.memory_index import init_memory_index
 
 _CONVERSATION_COLUMNS: dict[str, str] = {
     "ended_at": "TIMESTAMP",
@@ -57,6 +58,7 @@ def init_db(db_path: str = "data/chatbot.db") -> sqlite3.Connection:
                  )
                  ''')
 
+    init_memory_index(conn)
     conn.commit()
     return conn
 
@@ -94,8 +96,8 @@ def finish_conversation(
     conn: sqlite3.Connection,
     conversation_id: int,
     compacted_history: str,
-) -> None:
-    """Mark a conversation as ended and persist its final compacted context."""
+) -> sqlite3.Row:
+    """End a conversation and return metadata needed for durable session memory."""
     conn.execute(
         """
         UPDATE conversations
@@ -107,13 +109,24 @@ def finish_conversation(
         (compacted_history, conversation_id),
     )
     conn.commit()
+    row = conn.execute(
+        """
+        SELECT id, created_at, ended_at, compacted_history
+        FROM conversations
+        WHERE id = ?
+        """,
+        (conversation_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("The finished conversation could not be reloaded.")
+    return row
 
 
 def get_conversations_pending_memory(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return ended conversations that have not updated long-term memory yet."""
     cursor = conn.execute(
         """
-        SELECT id, compacted_history
+        SELECT id, created_at, ended_at, compacted_history
         FROM conversations
         WHERE ended_at IS NOT NULL
           AND memory_analyzed_at IS NULL

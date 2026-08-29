@@ -5,8 +5,12 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
 from buddy.agent import build_agent
-from buddy.config import Model, SHORT_TERM_MEMORY_MODEL
-from buddy.long_term_memory import MEMORY_STORE_PATH, create_long_term_memory
+from buddy.config import MODEL_TIERS, SHORT_TERM_MEMORY_MODEL
+from buddy.long_term_memory import (
+    InjectionOnlyMemory,
+    MEMORY_STORE_PATH,
+    create_long_term_memory,
+)
 from buddy.timed_compaction import SummarizingCompactionTimed
 
 
@@ -28,6 +32,15 @@ def test_long_term_memory_persists_between_store_instances(tmp_path):
 
     assert memory_file is not None
     assert memory_file.content == "Użytkowniczka lubi eksplorację."
+
+
+def test_application_memory_injects_without_native_memory_tools(tmp_path):
+    """Nested session/game documents are accessed only through recall_memory."""
+    memory = create_long_term_memory(tmp_path / "memory.db")
+
+    assert isinstance(memory, InjectionOnlyMemory)
+    assert memory.inject_memory is True
+    assert memory.get_toolset() is None
 
 
 def test_agent_contains_injected_memory_capability(monkeypatch):
@@ -56,6 +69,10 @@ def test_agent_uses_configured_short_term_memory_fallback(monkeypatch):
     assert isinstance(short_term_memory.model, FallbackModel)
     used_names = [model.model_name for model in short_term_memory.model.models]
     assert used_names == [
-        SHORT_TERM_MEMORY_MODEL.value.split(":", 1)[1],
-        Model.OPENAI.value.split(":", 1)[1],
+        SHORT_TERM_MEMORY_MODEL.value.split(":", 1)[1]
+    ] + [
+        model.value.split(":", 1)[1]
+        for model, tier in MODEL_TIERS.items()
+        if tier == MODEL_TIERS[SHORT_TERM_MEMORY_MODEL]
+        and model is not SHORT_TERM_MEMORY_MODEL
     ]

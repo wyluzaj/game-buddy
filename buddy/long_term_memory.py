@@ -19,6 +19,18 @@ MEMORY_AGENT_NAME = "main"
 MEMORY_STORE_PATH = f"{MEMORY_AGENT_NAME}/MEMORY.md"
 
 
+class InjectionOnlyMemory(Memory):
+    """Inject MEMORY.md without exposing Harness's flat-file memory tools.
+
+    Session and game documents use nested logical paths and are accessed through
+    the application's indexed ``recall_memory`` tool. Durable writes are handled
+    by the post-session analyzers directly through ``store``.
+    """
+
+    def get_toolset(self):
+        return None
+
+
 def create_long_term_memory(
     database_path: str | Path = MEMORY_DATABASE_PATH,
 ) -> Memory:
@@ -26,7 +38,7 @@ def create_long_term_memory(
     database_path = Path(database_path)
     database_path.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteMemoryStore(database=database_path)
-    return Memory(
+    return InjectionOnlyMemory(
         store=store,
         agent_name=MEMORY_AGENT_NAME,
         guidance=LONG_TERM_MEMORY_GUIDANCE,

@@ -37,7 +37,11 @@ def test_finish_conversation_persists_compacted_history(db):
     """An ended session retains the final rolling summary and recent tail."""
     conversation_id = create_conversation(db)
 
-    finish_conversation(db, conversation_id, '[{"kind":"summary"}]')
+    finished = finish_conversation(
+        db,
+        conversation_id,
+        '[{"kind":"summary"}]',
+    )
 
     row = db.execute(
         """
@@ -50,6 +54,9 @@ def test_finish_conversation_persists_compacted_history(db):
     assert row["ended_at"] is not None
     assert row["compacted_history"] == '[{"kind":"summary"}]'
     assert row["memory_analyzed_at"] is None
+    assert finished["id"] == conversation_id
+    assert finished["created_at"] is not None
+    assert finished["ended_at"] == row["ended_at"]
 
 
 def test_only_ended_unanalyzed_conversations_are_pending(db):
@@ -68,7 +75,7 @@ def test_only_ended_unanalyzed_conversations_are_pending(db):
 
 
 def test_init_db_migrates_existing_conversations_table(tmp_path):
-    """Existing chatbot databases receive the long-term-memory state columns."""
+    """Existing databases receive conversation state and the memory index."""
     database_path = tmp_path / "legacy.db"
     legacy = sqlite3.connect(database_path)
     legacy.execute(
@@ -88,6 +95,21 @@ def test_init_db_migrates_existing_conversations_table(tmp_path):
         row["name"]
         for row in migrated.execute("PRAGMA table_info(conversations)").fetchall()
     }
+    memory_tables = {
+        row["name"]
+        for row in migrated.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE name IN ('memory_documents', 'memory_relations', 'memory_search')
+            """
+        ).fetchall()
+    }
     migrated.close()
 
     assert {"ended_at", "compacted_history", "memory_analyzed_at"} <= columns
+    assert memory_tables == {
+        "memory_documents",
+        "memory_relations",
+        "memory_search",
+    }

@@ -6,26 +6,35 @@ from pydantic_ai.models.fallback import FallbackModel
 class Model(str, Enum):
     """Enum representing different AI models."""
 
-    GEMINI = "google:gemini-3.5-flash"
+    NVIDIA = "openrouter:nvidia/nemotron-3-ultra-550b-a55b:free"
+    POOLSIDE = "openrouter:poolside/laguna-s-2.1:free"
+    MINIMAX = "openrouter:minimax/minimax-m3:free"
+    NVIDIA_LITE = "openrouter:nvidia/nemotron-3.5-lightning:free"
+    LING = "openrouter:inclusionai/ling-3.0-flash-fin:free"
+    # GEMINI = "google:gemini-3.5-flash"
     GEMINI_LITE = "google:gemini-3.1-flash-lite"
-    OPENAI = "openrouter:openai/gpt-oss-120b:free"
-    OPENAI_MINI = "openrouter:openai/gpt-oss-20b:free"
+    GEMINI_LITE_3_5 = "google:gemini-3.5-flash-lite"
 
 
 MODEL_TIERS: dict[Model, str] = {
-    Model.GEMINI: "high",
+    Model.NVIDIA: "high",
+    Model.POOLSIDE: "high",
+    Model.MINIMAX: "low",
+    Model.NVIDIA_LITE: "low",
+    # Model.GEMINI: "high",
     Model.GEMINI_LITE: "medium",
-    Model.OPENAI: "medium",
-    Model.OPENAI_MINI: "low"
+    Model.GEMINI_LITE_3_5: "medium",
+    Model.LING: "medium",
 }
 
-ACTIVE_MODEL = Model.GEMINI
+ACTIVE_MODEL = Model.NVIDIA
 
 MIN_RECENT_MESSAGES = 15
 HISTORY_MINUTES = 30
 
 SHORT_TERM_MEMORY_MODEL = Model.GEMINI_LITE
 LONG_TERM_MEMORY_MODEL = Model.GEMINI_LITE
+CONTEXT_BUTLER_MODEL = Model.GEMINI_LITE
 
 MEMORY_DATABASE_PATH = "data/memory.db"
 
