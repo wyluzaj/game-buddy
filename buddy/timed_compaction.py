@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
 _SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
 _MEMORY_METADATA_PREFIX = 'pydantic-ai-harness.memory.v1:'
+_VIDEO_CONTEXT_PREFIX = '[game-buddy.video-context.v1]'
 
 
 def _stringify_tool_value(value: Any) -> str:
@@ -64,7 +65,8 @@ def format_messages(messages: Sequence[ModelMessage]) -> str:
                     if user_text:
                         lines.append(f'User: {user_text}')
                 elif isinstance(part, SystemPromptPart):
-                    lines.append(f'System: {part.content}')
+                    if not part.content.startswith(_VIDEO_CONTEXT_PREFIX):
+                        lines.append(f'System: {part.content}')
                 elif isinstance(part, ToolReturnPart):
                     full_content = _stringify_tool_value(part.content)
                     content_str = full_content[:500]
@@ -137,6 +139,31 @@ def _is_summary_message(message: ModelMessage) -> bool:
         isinstance(part, SystemPromptPart) and part.content.startswith(_SUMMARY_PREFIX)
         for part in message.parts
     )
+
+
+def _is_video_context_message(message: ModelMessage) -> bool:
+    """Return whether a request carries the replaceable observed-game state."""
+    return isinstance(message, ModelRequest) and any(
+        isinstance(part, SystemPromptPart)
+        and part.content.startswith(_VIDEO_CONTEXT_PREFIX)
+        for part in message.parts
+    )
+
+
+def _latest_video_context_part(
+    messages: list[ModelMessage],
+) -> SystemPromptPart | None:
+    """Find the newest video state so compaction never summarizes stale copies."""
+    for message in reversed(messages):
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in reversed(message.parts):
+            if (
+                isinstance(part, SystemPromptPart)
+                and part.content.startswith(_VIDEO_CONTEXT_PREFIX)
+            ):
+                return part
+    return None
 
 
 def _find_time_cutoff(
@@ -254,9 +281,18 @@ class SummarizingCompactionTimed(AbstractCapability[AgentDepsT]):
         if cutoff <= 0:
             return messages
 
-        system_parts = _extract_system_prompts(messages)
+        system_parts = [
+            part
+            for part in _extract_system_prompts(messages)
+            if not part.content.startswith(_VIDEO_CONTEXT_PREFIX)
+        ]
+        video_context_part = _latest_video_context_part(messages)
         to_summarize = messages[:cutoff]
-        preserved = messages[cutoff:]
+        preserved = [
+            message
+            for message in messages[cutoff:]
+            if not _is_video_context_message(message)
+        ]
 
         first_user_msg = (
             find_first_user_message(messages)
@@ -266,18 +302,25 @@ class SummarizingCompactionTimed(AbstractCapability[AgentDepsT]):
         new_old_messages = [
             message
             for message in to_summarize
-            if not _is_summary_message(message) and message is not first_user_msg
+            if not _is_summary_message(message)
+            and not _is_video_context_message(message)
+            and message is not first_user_msg
         ]
         if not new_old_messages:
             return messages
 
         previous_summary = _extract_previous_summary(messages) if self.incremental else None
-        prompt_messages = to_summarize
+        prompt_messages = [
+            message
+            for message in to_summarize
+            if not _is_video_context_message(message)
+        ]
         if previous_summary is not None:
             prompt_messages = [
                 message
-                for message in to_summarize
-                if not _is_summary_message(message) and message is not first_user_msg
+                for message in prompt_messages
+                if not _is_summary_message(message)
+                and message is not first_user_msg
             ]
         summary = await self._summarize(
             prompt_messages,
@@ -292,7 +335,11 @@ class SummarizingCompactionTimed(AbstractCapability[AgentDepsT]):
             default=datetime.now(timezone.utc),
         )
         summary_part = SystemPromptPart(content=f'{_SUMMARY_PREFIX}{summary}')
-        summary_message = ModelRequest(parts=[*system_parts, summary_part], timestamp=oldest_ts)
+        replacement_parts = [*system_parts]
+        if video_context_part is not None:
+            replacement_parts.append(video_context_part)
+        replacement_parts.append(summary_part)
+        summary_message = ModelRequest(parts=replacement_parts, timestamp=oldest_ts)
 
         first_user: list[ModelMessage] = []
         if first_user_msg is not None:

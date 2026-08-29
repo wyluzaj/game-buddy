@@ -25,6 +25,12 @@ from buddy.session_memory import (
     persist_session_document,
 )
 from buddy.timed_compaction import format_messages
+from buddy.video_context_injection import inject_video_context
+from buddy.video_storage import (
+    get_latest_pending_video_context,
+    mark_video_context_injected_through,
+)
+from buddy.video_session_memory import build_session_video_observations
 
 
 def main():
@@ -89,13 +95,31 @@ def main():
                 continue
 
             try:
-                result = agent.run_sync(user_input, message_history=history)
+                run_history = history
+                pending_video_context = None
+                if conversation_id is not None:
+                    pending_video_context = get_latest_pending_video_context(
+                        conn,
+                        conversation_id=conversation_id,
+                    )
+                    if pending_video_context is not None:
+                        run_history = inject_video_context(
+                            history,
+                            pending_video_context,
+                        )
+                result = agent.run_sync(user_input, message_history=run_history)
                 print(f"\nBot: {result.output}\n")
                 if conversation_id is None:
                     conversation_id = create_conversation(conn)
                 save_messages(conn, conversation_id, result.new_messages_json().decode())
                 # Keep the capability-processed history (including its summary) in RAM.
                 history = result.all_messages()
+                if pending_video_context is not None:
+                    mark_video_context_injected_through(
+                        conn,
+                        conversation_id=conversation_id,
+                        update_id=pending_video_context.id,
+                    )
             except Exception as e:
                 print(f"\n[Error: {e}]\n")
     finally:
@@ -120,6 +144,10 @@ def main():
                                 finished["ended_at"]
                             ),
                             session_context=compacted_history,
+                            video_observations=build_session_video_observations(
+                                conn,
+                                conversation_id,
+                            ),
                         )
                     )
                 except Exception as error:

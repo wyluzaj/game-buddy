@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
@@ -32,6 +33,12 @@ from buddy.memory_index import (
     search_memory_documents,
 )
 from buddy.session_memory import session_memory_path
+from buddy.video_models import VideoOverview, VideoReportMode
+from buddy.video_storage import (
+    create_video_segment,
+    save_video_context_update,
+    save_video_report,
+)
 
 
 @dataclass
@@ -399,6 +406,71 @@ def test_compacted_session_links_all_explicit_games_from_raw_user_messages(db):
         game_document_id=cyberpunk.id,
     ) == [session]
     assert db.execute("SELECT COUNT(*) FROM memory_relations").fetchone()[0] == 2
+
+
+def test_video_observations_reach_session_and_game_memory_only(db, tmp_path):
+    """Visual evidence is durable and game-scoped, never a user statement."""
+    conversation_id = create_conversation(db)
+    started_at = datetime(2026, 8, 29, 18, 0, tzinfo=timezone.utc)
+    video_path = tmp_path / "minecraft.mp4"
+    video_path.write_bytes(b"video")
+    segment = create_video_segment(
+        db,
+        file_path=video_path,
+        started_at=started_at,
+        ended_at=started_at + timedelta(minutes=2),
+        conversation_id=conversation_id,
+    )
+    video_report = save_video_report(
+        db,
+        segment_id=segment.id,
+        mode=VideoReportMode.OVERVIEW,
+        provider="stub",
+        model_name="stub",
+        content=VideoOverview(
+            summary="Gracz zamienił lawę w obsydian."
+        ).model_dump(mode="json"),
+    )
+    save_video_context_update(
+        db,
+        report_id=video_report.id,
+        changed=True,
+        context="Gracz zamienił lawę w obsydian.",
+        sources=[segment.source_uri],
+    )
+    finish_conversation(db, conversation_id, "User: Gram teraz w Minecraft.")
+    analyzer = StubAnalyzer(
+        MemoryAnalysisResult(
+            changed=False,
+            memory_markdown="",
+            games_with_user_state=["Minecraft"],
+        )
+    )
+    game_analyzer = StubGameAnalyzer(GameMemoryAnalysisResult(updates=[]))
+    memory = Memory(InMemoryStore())
+
+    report = asyncio.run(
+        process_pending_memories(db, analyzer, memory, game_analyzer)
+    )
+    session_file = asyncio.run(
+        memory.store.read(
+            session_memory_path(conversation_id),
+            max_chars=100_000,
+        )
+    )
+
+    assert report.processed == 1
+    assert session_file is not None
+    assert "## Observed Gameplay" in session_file.content
+    assert "zamienił lawę w obsydian" in session_file.content
+    assert segment.source_uri in session_file.content
+    assert "<video_observations>" in game_analyzer.prompts[0]
+    assert "zamienił lawę w obsydian" in game_analyzer.prompts[0]
+    user_section = analyzer.prompts[0].split("<user_statements>", 1)[1].split(
+        "</user_statements>", 1
+    )[0]
+    assert "User: Gram teraz w Minecraft." in user_section
+    assert "obsydian" not in user_section
 
 
 def test_failed_session_stays_pending_and_does_not_block_next_session(db):

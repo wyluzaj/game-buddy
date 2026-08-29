@@ -16,6 +16,7 @@ from buddy.long_term_memory import create_long_term_memory
 from buddy.memory_recall import create_recall_memory_tool
 from buddy.prompts import CHAT_AGENT_INSTRUCTIONS
 from buddy.timed_compaction import SummarizingCompactionTimed
+from buddy.video_detail_tool import create_analyze_video_detail_tool
 
 
 def build_agent(
@@ -31,6 +32,7 @@ def build_agent(
         tools.append(
             create_recall_memory_tool(memory_connection, long_term_memory)
         )
+        tools.append(create_analyze_video_detail_tool(memory_connection))
     return Agent(
         model=model,
         instructions=CHAT_AGENT_INSTRUCTIONS,

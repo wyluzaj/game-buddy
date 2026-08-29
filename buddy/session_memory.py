@@ -31,19 +31,24 @@ def build_session_document(
     started_at: datetime,
     ended_at: datetime,
     session_context: str,
+    video_observations: str = "",
 ) -> str:
     """Wrap the final short-memory snapshot in a small Markdown report."""
     context = session_context.strip()
     if not context:
         raise ValueError("A session report cannot be built from empty context.")
 
-    return (
+    report = (
         f"# Session {conversation_id}\n\n"
         f"- Started: {_format_timestamp(started_at)}\n"
         f"- Ended: {_format_timestamp(ended_at)}\n\n"
         f"## Session Report\n\n"
         f"{context}\n"
     )
+    observations = video_observations.strip()
+    if observations:
+        report += f"\n## Observed Gameplay\n\n{observations}\n"
+    return report
 
 
 async def persist_session_document(
@@ -54,6 +59,7 @@ async def persist_session_document(
     started_at: datetime,
     ended_at: datetime,
     session_context: str,
+    video_observations: str = "",
 ) -> MemoryDocument:
     """Write one idempotent session report and refresh its search metadata."""
     path = session_memory_path(conversation_id)
@@ -62,6 +68,7 @@ async def persist_session_document(
         started_at=started_at,
         ended_at=ended_at,
         session_context=session_context,
+        video_observations=video_observations,
     )
     current = await memory.store.read(path, max_chars=MAX_SESSION_DOCUMENT_CHARS)
     if current is None or current.truncated or current.content != content:
