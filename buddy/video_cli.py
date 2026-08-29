@@ -8,14 +8,13 @@ import sqlite3
 import sys
 
 from dotenv import load_dotenv
+from pydantic_ai.exceptions import AgentRunError
 
 from buddy.database import init_db
 from buddy.gemini_video_analyzer import GeminiVideoAnalyzer
 from buddy.video_analyzer import VideoAnalysisError
-from buddy.video_analysis_service import (
-    VideoAnalysisOutcome,
-    register_and_analyze_video,
-)
+from buddy.video_context_butler import build_video_context_butler
+from buddy.video_pipeline import VideoProcessingOutcome, process_video_file
 
 
 DEFAULT_MANUAL_VIDEO_DURATION_SECONDS = 120.0
@@ -73,7 +72,13 @@ def main(argv: list[str] | None = None) -> int:
                 conversation_id=args.conversation_id,
             )
         )
-    except (VideoAnalysisError, sqlite3.Error, OSError, ValueError) as exc:
+    except (
+        AgentRunError,
+        VideoAnalysisError,
+        sqlite3.Error,
+        OSError,
+        ValueError,
+    ) as exc:
         print(f"Video analysis failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     finally:
@@ -90,11 +95,13 @@ async def _run_analysis(
     started_at: datetime,
     ended_at: datetime,
     conversation_id: int | None,
-) -> VideoAnalysisOutcome:
+) -> VideoProcessingOutcome:
+    context_butler = build_video_context_butler()
     async with GeminiVideoAnalyzer() as analyzer:
-        return await register_and_analyze_video(
+        return await process_video_file(
             conn,
             analyzer,
+            context_butler,
             file_path=video_path,
             started_at=started_at,
             ended_at=ended_at,
@@ -102,26 +109,44 @@ async def _run_analysis(
         )
 
 
-def _print_outcome(outcome: VideoAnalysisOutcome) -> None:
-    print(f"Segment: {outcome.segment.id} ({outcome.segment.source_uri})")
-    print(f"Status: {outcome.segment.status.value}")
-    print(f"Model: {outcome.report.provider}/{outcome.report.model_name}")
+def _print_outcome(outcome: VideoProcessingOutcome) -> None:
+    analysis = outcome.analysis
+    print(f"Segment: {analysis.segment.id} ({analysis.segment.source_uri})")
+    print(f"Status: {analysis.segment.status.value}")
+    print(f"Model: {analysis.report.provider}/{analysis.report.model_name}")
     print(
         "Report: "
-        + ("reused existing result" if outcome.reused_existing_report else "created")
+        + (
+            "reused existing result"
+            if analysis.reused_existing_report
+            else "created"
+        )
     )
-    print(f"Summary: {outcome.overview.summary}")
-    if outcome.overview.events:
+    print(f"Summary: {analysis.overview.summary}")
+    if analysis.overview.events:
         print("Events:")
-        for event in outcome.overview.events:
+        for event in analysis.overview.events:
             print(
                 f"  - {event.start_seconds:.1f}-{event.end_seconds:.1f}s "
                 f"[{event.importance.value}]: {event.description}"
             )
-    if outcome.overview.uncertainties:
+    if analysis.overview.uncertainties:
         print("Uncertainties:")
-        for uncertainty in outcome.overview.uncertainties:
+        for uncertainty in analysis.overview.uncertainties:
             print(f"  - {uncertainty}")
+    context_update = outcome.context_update
+    print(
+        "Video context decision: "
+        + ("meaningful change" if context_update.changed else "no meaningful change")
+    )
+    if context_update.context:
+        print(context_update.context)
+    if context_update.sources:
+        print("Context sources:")
+        for source in context_update.sources:
+            print(f"  - {source}")
+    if context_update.uncertainty:
+        print(f"Context note: {context_update.uncertainty}")
 
 
 if __name__ == "__main__":
