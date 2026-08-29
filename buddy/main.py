@@ -60,7 +60,11 @@ def main():
         except Exception as error:
             print(f"[Memory analysis unavailable: {error}]")
 
-    agent = build_agent(model_object, memory=memory)
+    agent = build_agent(
+        model_object,
+        memory=memory,
+        memory_connection=conn,
+    )
     conversation_id: int | None = None
     history = []
 

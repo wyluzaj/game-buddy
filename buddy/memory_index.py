@@ -214,6 +214,31 @@ def get_memory_document(
     return _document_from_row(row) if row is not None else None
 
 
+def get_session_game_documents(
+    conn: sqlite3.Connection,
+    session_document_id: int,
+) -> list[MemoryDocument]:
+    """Return game profiles directly linked to one session document."""
+    rows = conn.execute(
+        """
+        SELECT games.*
+        FROM memory_relations AS relations
+        JOIN memory_documents AS games
+          ON games.id = relations.target_document_id
+        WHERE relations.source_document_id = ?
+          AND relations.relation_type = ?
+          AND games.document_type = ?
+        ORDER BY games.title, games.id
+        """,
+        (
+            session_document_id,
+            MemoryRelationType.BELONGS_TO_GAME.value,
+            MemoryDocumentType.GAME.value,
+        ),
+    ).fetchall()
+    return [_document_from_row(row) for row in rows]
+
+
 def link_memory_documents(
     conn: sqlite3.Connection,
     *,

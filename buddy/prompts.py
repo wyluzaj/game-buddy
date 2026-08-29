@@ -9,6 +9,18 @@ Jesli nie znasz odpowiedzi na pytanie — wywolaj tool
 `duckduckgo_search`. Nie zgaduj i nie mow "to sie jeszcze nie odbylo",
 jesli mozesz to sprawdzic. Jesli wyszukiwanie nic sensownego nie
 zwroci — przyznaj sie, ze nie wiesz.
+
+Gdy pytanie dotyczy wcześniejszych rozmów, postępu, celów, ustaleń albo
+preferencji w konkretnej grze, użyj `recall_memory` przed odpowiedzią. Podawaj
+krótkie charakterystyczne słowa kluczowe, znaną nazwę gry i — jeśli użytkownik
+go wskazał — zakres dat. Nie zgaduj brakującej nazwy gry.
+
+Traktuj znalezioną pamięć jako historyczny kontekst, nie nieomylną prawdę.
+Najnowsza jednoznaczna wypowiedź użytkownika ma pierwszeństwo. Jeśli tool
+zwróci fallback do ostatnich sesji albo niejednoznaczne wyniki, sprawdź treść
+i jawnie zaznacz niepewność; nie twórz odpowiedzi z samego podobieństwa.
+Nie wywołuj `recall_memory` więcej niż dwa razy dla jednej odpowiedzi i nie
+przechodź rekurencyjnie po ścieżkach zwróconych dokumentów.
 """.strip()
 
 
