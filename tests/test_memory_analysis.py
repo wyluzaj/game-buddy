@@ -12,6 +12,7 @@ from pydantic_ai_harness.memory import InMemoryStore, Memory
 
 from buddy.config import LONG_TERM_MEMORY_MODEL, Model
 from buddy.database import create_conversation, finish_conversation, save_messages
+from buddy.game_memory import game_memory_path
 from buddy.long_term_memory import MEMORY_STORE_PATH
 from buddy.memory_analysis import (
     MemoryAnalysisResult,
@@ -20,7 +21,11 @@ from buddy.memory_analysis import (
     process_pending_memories,
     update_long_term_memory,
 )
-from buddy.memory_index import get_memory_document
+from buddy.memory_index import (
+    MemoryDocumentType,
+    get_memory_document,
+    search_memory_documents,
+)
 from buddy.session_memory import session_memory_path
 
 
@@ -250,6 +255,61 @@ def test_raw_messages_are_fallback_when_snapshot_is_empty(db):
 
     assert report.processed == 1
     assert "User: Lubię eksplorację." in analyzer.prompts[0]
+
+
+def test_compacted_session_links_all_explicit_games_from_raw_user_messages(db):
+    """Raw user evidence survives compaction and one session may link many games."""
+    conversation_id = create_conversation(db)
+    raw_messages = ModelMessagesTypeAdapter.dump_json(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content="Gram dziś w Elden Ring, a potem w Cyberpunk 2077."
+                    )
+                ]
+            )
+        ]
+    ).decode()
+    save_messages(db, conversation_id, raw_messages)
+    finish_conversation(
+        db,
+        conversation_id,
+        "System: Summary of previous conversation:\nRozmowa o dwóch grach.",
+    )
+    analyzer = StubAnalyzer(
+        MemoryAnalysisResult(
+            changed=False,
+            memory_markdown="",
+            mentioned_games=["Elden Ring", "elden ring", "Cyberpunk 2077"],
+        )
+    )
+    memory = Memory(InMemoryStore())
+
+    report = asyncio.run(process_pending_memories(db, analyzer, memory))
+    session = get_memory_document(
+        db,
+        session_memory_path(conversation_id),
+    )
+    elden_ring = get_memory_document(db, game_memory_path("Elden Ring"))
+    cyberpunk = get_memory_document(db, game_memory_path("Cyberpunk 2077"))
+
+    assert report.processed == 1
+    assert "User: Gram dziś w Elden Ring" in analyzer.prompts[0]
+    assert session is not None
+    assert elden_ring is not None
+    assert cyberpunk is not None
+    assert search_memory_documents(
+        db,
+        document_type=MemoryDocumentType.SESSION,
+        game_document_id=elden_ring.id,
+    ) == [session]
+    assert search_memory_documents(
+        db,
+        document_type=MemoryDocumentType.SESSION,
+        game_document_id=cyberpunk.id,
+    ) == [session]
+    assert db.execute("SELECT COUNT(*) FROM memory_relations").fetchone()[0] == 2
 
 
 def test_failed_session_stays_pending_and_does_not_block_next_session(db):

@@ -61,11 +61,20 @@ preferencje użytkownika, długoterminowe cele, ważne decyzje, zamiary oraz
 istotne globalne wnioski lub wydarzenia. Pomijaj powitania, chwilowe
 szczegóły, powtórzenia i techniczne elementy rozmowy.
 
+Nie zapisuj w globalnym MEMORY.md szczegółów dotyczących tylko jednej gry,
+takich jak build postaci, lokacje, postęp czy aktualne zadania. Pozostają one
+w raporcie sesji i będą utrzymywane w osobnym dokumencie pamięci gry.
+
 KRYTYCZNA ZASADA ŹRÓDEŁ: nowy fakt o użytkowniku musi wynikać z sekcji
 <user_statements>. Wypowiedź asystenta nigdy nie jest samodzielnym dowodem
 faktu o użytkowniku. Jeśli twierdzenie występuje tylko w wypowiedzi
 asystenta, nie zapisuj go i ustaw changed=false. Nie utrwalaj niepewnych
 interpretacji jako faktów i nie zapisuj sekretów.
+
+W polu mentioned_games zwróć tytuły gier jawnie nazwanych przez użytkownika
+w <user_statements>. Nie zgaduj gry na podstawie lokacji, postaci, gatunku ani
+wypowiedzi asystenta. Jedna sesja może dotyczyć kilku gier. Jeśli użytkownik
+nie podał żadnego tytułu, zwróć pustą listę.
 
 Połącz nowe informacje z aktualnym MEMORY.md. Zachowaj nadal ważne wpisy,
 unikaj duplikatów, a sprzeczne informacje aktualizuj tylko na podstawie
