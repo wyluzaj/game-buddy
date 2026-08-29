@@ -4,6 +4,7 @@ from pathlib import Path
 
 from buddy.config import STORAGE
 from buddy.memory.index import init_memory_index
+from buddy.memory.journal import init_memory_journal
 from buddy.video.storage import init_video_storage
 
 _CONVERSATION_COLUMNS: dict[str, str] = {
@@ -11,7 +12,7 @@ _CONVERSATION_COLUMNS: dict[str, str] = {
     "compacted_history": "TEXT",
     "memory_analyzed_at": "TIMESTAMP",
 }
-LATEST_SCHEMA_VERSION = 2
+LATEST_SCHEMA_VERSION = 3
 
 
 def _open_connection(db_path: str) -> sqlite3.Connection:
@@ -62,6 +63,7 @@ def init_db(db_path: str = STORAGE.chat_database_path) -> sqlite3.Connection:
                  ''')
 
     init_memory_index(conn)
+    init_memory_journal(conn)
     init_video_storage(conn)
     conn.execute(f"PRAGMA user_version = {LATEST_SCHEMA_VERSION}")
     conn.commit()

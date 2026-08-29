@@ -17,10 +17,15 @@ buddy.main.main
        -> video.storage.init_video_storage
   -> memory.long_term.create_long_term_memory
   -> memory.analysis.process_pending_memories
+       -> memory.journal.get_or_create_memory_job
        -> memory.session.persist_session_document
+       -> journal checkpoint: SESSION_PERSISTED
        -> memory.analysis._apply_long_term_memory
+       -> journal checkpoint: GLOBAL_APPLIED + structured analyzer result
        -> memory.game.link_session_to_games
        -> memory.game_analysis.update_game_profiles
+       -> journal checkpoint: GAME_PROFILES_APPLIED
+       -> mark conversation analyzed and remove completed journal row
   -> agent.build_agent
        -> memory.compaction.SummarizingCompactionTimed
        -> memory.long_term.InjectionOnlyMemory
@@ -158,6 +163,9 @@ video_reports (detail)
 memory_documents
   session --belongs_to_game--> game
   indexed by memory_search (FTS5)
+
+memory_processing_jobs
+  conversation_id -> ordered cross-database checkpoint + retry payload
 ```
 
 Main responsibilities:
@@ -168,10 +176,10 @@ Main responsibilities:
 - normalized paths to local video files;
 - overview/detail reports and compact context updates.
 
-The database uses `PRAGMA user_version`. Schema version 2 migrates the original
-path-unique video tables to recording keys, adds indexed detail request keys, and preserves
-existing segment/report/context IDs. Storage reads validate report JSON and context-source
-JSON before returning domain objects.
+The database uses `PRAGMA user_version`. Schema version 2 migrated the original path-unique
+video tables to recording keys and added indexed detail request keys. Version 3 adds the
+memory-processing journal. Existing segment/report/context IDs are preserved. Storage reads
+validate report JSON and context-source JSON before returning domain objects.
 
 ### `data/memory.db`
 
@@ -209,6 +217,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/memory/session.py` | Logical `main/sessions/*.md` reports and indexing | Called at shutdown and pending-memory processing |
 | `buddy/memory/index.py` | Memory metadata, FTS5 search, and session-to-game relations | Used by session/game memory and recall |
 | `buddy/memory/analysis.py` | Completed-session global consolidation coordinator | Updates global memory, session documents, and game profiles |
+| `buddy/memory/journal.py` | Durable cross-database checkpoints and retry payloads | Lets pending-memory processing resume after session, global, or game stages |
 | `buddy/memory/game.py` | Game-name normalization, collision-safe paths, documents, and relations | Used by memory analysis and recall; adds a title hash only when two distinct titles share a slug |
 | `buddy/memory/game_analysis.py` | Source-aware updates of allowed `main/games/*.md` profiles | Receives explicit user evidence and video observations |
 | `buddy/memory/recall.py` | Bounded historical retrieval and reduction | Uses the memory index, Harness store, and Context Butler |

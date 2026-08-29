@@ -17,15 +17,24 @@ from buddy.database import (
     mark_memory_analyzed,
 )
 from buddy.memory.long_term import MEMORY_STORE_PATH
+from buddy.memory.journal import (
+    MemoryProcessingStage,
+    checkpoint_memory_job,
+    delete_memory_job,
+    get_or_create_memory_job,
+    record_memory_job_failure,
+)
 from buddy.prompts import (
     LONG_TERM_MEMORY_ANALYSIS_PROMPT,
     LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
 )
 from buddy.memory.game import link_session_to_games
 from buddy.memory.game_analysis import GameMemoryAnalyzer, update_game_profiles
+from buddy.memory.index import get_memory_document
 from buddy.memory.session import (
     parse_database_timestamp,
     persist_session_document,
+    session_memory_path,
 )
 from buddy.memory.compaction import (
     extract_user_evidence,
@@ -260,7 +269,10 @@ async def process_pending_memories(
     report = MemoryProcessingReport()
     for row in get_conversations_pending_memory(conn):
         conversation_id = row["id"]
+        job_created = False
         try:
+            job = get_or_create_memory_job(conn, conversation_id)
+            job_created = True
             snapshot = row["compacted_history"] or ""
             session_context = _deserialize_context_snapshot(snapshot)
             if not session_context:
@@ -276,28 +288,70 @@ async def process_pending_memories(
 
             session_document = None
             if session_context:
-                session_document = await persist_session_document(
+                if job.stage < MemoryProcessingStage.SESSION_PERSISTED:
+                    session_document = await persist_session_document(
+                        conn,
+                        memory,
+                        conversation_id=conversation_id,
+                        started_at=parse_database_timestamp(row["created_at"]),
+                        ended_at=parse_database_timestamp(row["ended_at"]),
+                        session_context=session_context,
+                        video_observations=video_observations,
+                    )
+                else:
+                    session_document = get_memory_document(
+                        conn,
+                        session_memory_path(conversation_id),
+                    )
+                    if session_document is None:
+                        raise RuntimeError(
+                            "Memory journal references a missing session document."
+                        )
+            if job.stage < MemoryProcessingStage.SESSION_PERSISTED:
+                job = checkpoint_memory_job(
                     conn,
-                    memory,
-                    conversation_id=conversation_id,
-                    started_at=parse_database_timestamp(row["created_at"]),
-                    ended_at=parse_database_timestamp(row["ended_at"]),
-                    session_context=session_context,
-                    video_observations=video_observations,
+                    conversation_id,
+                    MemoryProcessingStage.SESSION_PERSISTED,
                 )
 
             raw_messages = _load_raw_conversation_messages(conn, conversation_id)
             raw_context = format_messages(raw_messages)
             user_evidence = format_user_evidence(raw_messages)
-            applied = await _apply_long_term_memory(
-                analyzer,
-                memory,
-                session_context,
-                user_evidence_context=(
-                    user_evidence or extract_user_evidence(session_context)
-                ),
-            )
-            if session_document is not None and applied.games_with_user_state:
+            if job.stage >= MemoryProcessingStage.GLOBAL_APPLIED:
+                if job.analysis is None:
+                    raise RuntimeError(
+                        "Memory journal is missing its analyzer result."
+                    )
+                applied = AppliedMemoryAnalysis(
+                    changed=bool(job.analysis.get("changed")),
+                    games_with_user_state=[
+                        str(name)
+                        for name in job.analysis.get("games_with_user_state", [])
+                    ],
+                )
+            else:
+                applied = await _apply_long_term_memory(
+                    analyzer,
+                    memory,
+                    session_context,
+                    user_evidence_context=(
+                        user_evidence or extract_user_evidence(session_context)
+                    ),
+                )
+                job = checkpoint_memory_job(
+                    conn,
+                    conversation_id,
+                    MemoryProcessingStage.GLOBAL_APPLIED,
+                    analysis={
+                        "changed": applied.changed,
+                        "games_with_user_state": applied.games_with_user_state,
+                    },
+                )
+            if (
+                job.stage < MemoryProcessingStage.GAME_PROFILES_APPLIED
+                and session_document is not None
+                and applied.games_with_user_state
+            ):
                 game_documents = await link_session_to_games(
                     conn,
                     memory,
@@ -315,16 +369,24 @@ async def process_pending_memories(
                         ),
                         video_evidence_context=video_observations,
                     )
+            if job.stage < MemoryProcessingStage.GAME_PROFILES_APPLIED:
+                checkpoint_memory_job(
+                    conn,
+                    conversation_id,
+                    MemoryProcessingStage.GAME_PROFILES_APPLIED,
+                )
             mark_memory_analyzed(conn, conversation_id)
+            delete_memory_job(conn, conversation_id)
             report.processed += 1
             if applied.changed:
                 report.updated += 1
         # One broken session must stay pending without blocking later sessions.
         # noinspection PyBroadException
         except Exception as error:
+            reason = f"{type(error).__name__}: {error}"
+            if job_created:
+                record_memory_job_failure(conn, conversation_id, reason)
             report.failed_conversation_ids.append(conversation_id)
-            report.failure_reasons[conversation_id] = (
-                f"{type(error).__name__}: {error}"
-            )
+            report.failure_reasons[conversation_id] = reason
 
     return report

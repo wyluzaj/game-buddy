@@ -87,6 +87,19 @@ class FailingThenUnchangedAnalyzer:
         )
 
 
+class FailingThenUnchangedGameAnalyzer:
+    def __init__(self):
+        self.calls = 0
+
+    async def run(self, _prompt: str) -> StubGameRunResult:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("temporary game analyzer failure")
+        return StubGameRunResult(
+            output=GameMemoryAnalysisResult(updates=[])
+        )
+
+
 def test_global_memory_is_rendered_deterministically_from_structured_facts():
     rendered = render_global_memory(
         [
@@ -539,3 +552,43 @@ def test_failed_session_stays_pending_and_does_not_block_next_session(db):
 
     assert retry_report.processed == 1
     assert retry_report.failed_conversation_ids == []
+
+
+def test_retry_resumes_after_global_memory_checkpoint(db):
+    conversation_id = create_conversation(db)
+    finish_conversation(db, conversation_id, "User: Gram w Minecraft.")
+    analyzer = StubAnalyzer(
+        MemoryAnalysisResult(
+            changed=True,
+            global_facts=["Preferuje spokojną eksplorację."],
+            games_with_user_state=["Minecraft"],
+        )
+    )
+    game_analyzer = FailingThenUnchangedGameAnalyzer()
+    memory = Memory(InMemoryStore())
+
+    first = asyncio.run(
+        process_pending_memories(db, analyzer, memory, game_analyzer)
+    )
+    checkpoint = db.execute(
+        "SELECT stage, analysis_json, last_error FROM memory_processing_jobs "
+        "WHERE conversation_id = ?",
+        (conversation_id,),
+    ).fetchone()
+    second = asyncio.run(
+        process_pending_memories(db, analyzer, memory, game_analyzer)
+    )
+
+    assert first.failed_conversation_ids == [conversation_id]
+    assert checkpoint is not None
+    assert checkpoint["stage"] == 2
+    assert checkpoint["analysis_json"] is not None
+    assert "temporary game analyzer failure" in checkpoint["last_error"]
+    assert second.processed == 1
+    assert second.failed_conversation_ids == []
+    assert len(analyzer.prompts) == 1
+    assert game_analyzer.calls == 2
+    assert db.execute(
+        "SELECT COUNT(*) FROM memory_processing_jobs WHERE conversation_id = ?",
+        (conversation_id,),
+    ).fetchone()[0] == 0
