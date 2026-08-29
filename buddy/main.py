@@ -1,14 +1,16 @@
 """Terminal entry point: builds the agent, opens the database, runs the chat loop."""
 import asyncio
+import traceback
 
 import logfire
 from dotenv import load_dotenv
+from pydantic_ai.messages import ModelMessage
 
 load_dotenv()
 logfire.configure(send_to_logfire="if-token-present")
 logfire.instrument_pydantic_ai()
 
-from buddy.config import choose_model, build_model
+from buddy.config import RUNTIME, build_model, choose_model
 from buddy.agent import build_agent
 from buddy.database import (
     create_conversation,
@@ -72,6 +74,8 @@ def main():
                     )
         except Exception as error:
             print(f"[Memory analysis unavailable: {error}]")
+            if RUNTIME.show_tracebacks:
+                traceback.print_exc()
 
     agent = build_agent(
         model_object,
@@ -79,7 +83,7 @@ def main():
         memory_connection=conn,
     )
     conversation_id: int | None = None
-    history = []
+    history: list[ModelMessage] = []
 
     try:
         print("Ready to go. Ctrl + C to end session.\n")
@@ -122,6 +126,8 @@ def main():
                     )
             except Exception as e:
                 print(f"\n[Error: {e}]\n")
+                if RUNTIME.show_tracebacks:
+                    traceback.print_exc()
     finally:
         try:
             if conversation_id is not None:
@@ -152,6 +158,8 @@ def main():
                     )
                 except Exception as error:
                     print(f"[Session memory save failed: {error}]")
+                    if RUNTIME.show_tracebacks:
+                        traceback.print_exc()
         finally:
             conn.close()
 

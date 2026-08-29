@@ -208,7 +208,7 @@ and are deleted after generation whenever cleanup succeeds.
 | Module | Responsibility | Main dependencies / consumers |
 | --- | --- | --- |
 | `buddy/main.py` | Application composition, terminal loop, startup consolidation, session shutdown | Coordinates chat, memory, video injection, and persistence |
-| `buddy/config.py` | Central immutable sections for models, agent, storage, memory, video, and MIME types | Used by all factories, services, models, and entry points |
+| `buddy/config.py` | Central immutable sections for models, runtime diagnostics, agent, storage, memory, video, and MIME types | Used by all factories, services, models, and entry points |
 | `buddy/agent.py` | Main Pydantic AI agent factory | Registers compaction, global memory, recall, video detail, and web search |
 | `buddy/prompts.py` | Central LLM instructions and prompt templates | Used by chat, memory, Butler, and video analyzers |
 | `buddy/database.py` | SQLite connection, conversations, and raw message batches | Initializes memory-index and video-storage schemas |
@@ -257,6 +257,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `tests/test_video_context_injection.py` | Context replacement, acknowledgement, and session isolation |
 | `tests/test_video_detail_service.py` | Safe URIs, time ranges, evidence validation, and concurrent detail cache |
 | `tests/test_video_pipeline.py` | Overview-to-context pipeline and partial-failure recovery |
+| `tests/test_video_cli.py` | Parser defaults, input validation, exit codes, and CLI orchestration |
 
 ## Current scope boundary
 

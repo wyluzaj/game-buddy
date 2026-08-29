@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+import os
 
 from pydantic_ai.models.fallback import FallbackModel
 
@@ -50,6 +51,18 @@ class AgentSettings:
     min_recent_messages: int = 15
     clear_tool_results_max_tokens: int = 50_000
     clear_tool_results_keep_pairs: int = 3
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSettings:
+    """Terminal diagnostics controlled through environment variables."""
+
+    show_tracebacks: bool = os.getenv("BUDDY_DEBUG", "").casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +120,7 @@ class VideoSettings:
 
 MODELS = ModelSettings()
 AGENT = AgentSettings()
+RUNTIME = RuntimeSettings()
 STORAGE = StorageSettings()
 MEMORY = MemorySettings()
 VIDEO = VideoSettings()
