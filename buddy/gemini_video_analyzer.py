@@ -2,14 +2,16 @@
 
 import asyncio
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol, TypeVar, cast
 
 from google import genai
 from google.genai import types
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from buddy.config import Model, VIDEO_OVERVIEW_MODEL
 from buddy.prompts import (
+    VIDEO_DETAIL_ANALYZER_INSTRUCTIONS,
+    VIDEO_DETAIL_REQUEST,
     VIDEO_OVERVIEW_ANALYZER_INSTRUCTIONS,
     VIDEO_OVERVIEW_REQUEST,
 )
@@ -17,7 +19,7 @@ from buddy.video_analyzer import (
     InvalidVideoFileError,
     VideoProviderError,
 )
-from buddy.video_models import VideoOverview
+from buddy.video_models import VideoDetailAnalysis, VideoOverview
 
 
 DEFAULT_FILE_PROCESSING_TIMEOUT_SECONDS = 180.0
@@ -34,6 +36,8 @@ SUPPORTED_VIDEO_MIME_TYPES: dict[str, str] = {
     ".wmv": "video/wmv",
     ".3gp": "video/3gpp",
 }
+
+StructuredVideoResult = TypeVar("StructuredVideoResult", bound=BaseModel)
 
 
 class _AsyncFiles(Protocol):
@@ -102,6 +106,45 @@ class GeminiVideoAnalyzer:
 
     async def analyze_overview(self, video_path: Path) -> VideoOverview:
         """Upload one local video, analyze it, and remove the temporary upload."""
+        response = await self._generate_structured(
+            video_path,
+            request=VIDEO_OVERVIEW_REQUEST,
+            instructions=VIDEO_OVERVIEW_ANALYZER_INSTRUCTIONS,
+            response_schema=VideoOverview,
+        )
+        return _parse_structured(response, VideoOverview, "video overview")
+
+    async def analyze_detail(
+        self,
+        video_path: Path,
+        *,
+        question: str,
+        start_seconds: float,
+        end_seconds: float,
+    ) -> VideoDetailAnalysis:
+        """Closely inspect one caller-selected range of a local segment."""
+        request = VIDEO_DETAIL_REQUEST.format(
+            question=question,
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+        )
+        response = await self._generate_structured(
+            video_path,
+            request=request,
+            instructions=VIDEO_DETAIL_ANALYZER_INSTRUCTIONS,
+            response_schema=VideoDetailAnalysis,
+        )
+        return _parse_structured(response, VideoDetailAnalysis, "video detail")
+
+    async def _generate_structured(
+        self,
+        video_path: Path,
+        *,
+        request: str,
+        instructions: str,
+        response_schema: type[StructuredVideoResult],
+    ) -> types.GenerateContentResponse:
+        """Own the shared upload, processing, generation, and cleanup lifecycle."""
         path, mime_type = _validate_video_file(video_path)
         uploaded: types.File | None = None
         try:
@@ -112,15 +155,15 @@ class GeminiVideoAnalyzer:
             uploaded = await self._wait_until_active(uploaded)
             response = await self._client.aio.models.generate_content(
                 model=self._model_name,
-                contents=[VIDEO_OVERVIEW_REQUEST, uploaded],
+                contents=[request, uploaded],
                 config=types.GenerateContentConfig(
-                    system_instruction=VIDEO_OVERVIEW_ANALYZER_INSTRUCTIONS,
+                    system_instruction=instructions,
                     response_mime_type="application/json",
-                    response_schema=VideoOverview,
+                    response_schema=response_schema,
                     temperature=0.1,
                 ),
             )
-            return _parse_overview(response)
+            return response
         except VideoProviderError:
             raise
         except Exception as exc:
@@ -204,17 +247,21 @@ def _file_state_name(uploaded: types.File) -> str:
     return str(name).rsplit(".", 1)[-1].upper()
 
 
-def _parse_overview(response: types.GenerateContentResponse) -> VideoOverview:
+def _parse_structured(
+    response: types.GenerateContentResponse,
+    result_type: type[StructuredVideoResult],
+    label: str,
+) -> StructuredVideoResult:
     parsed = response.parsed
     try:
-        if isinstance(parsed, VideoOverview):
+        if isinstance(parsed, result_type):
             return parsed
         if parsed is not None:
-            return VideoOverview.model_validate(parsed)
+            return result_type.model_validate(parsed)
         if response.text:
-            return VideoOverview.model_validate_json(response.text)
+            return result_type.model_validate_json(response.text)
     except (ValidationError, ValueError) as exc:
         raise VideoProviderError(
-            "Gemini returned an invalid structured video overview."
+            f"Gemini returned an invalid structured {label}."
         ) from exc
-    raise VideoProviderError("Gemini returned an empty video overview.")
+    raise VideoProviderError(f"Gemini returned an empty {label}.")

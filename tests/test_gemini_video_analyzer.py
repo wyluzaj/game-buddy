@@ -10,7 +10,12 @@ from buddy.video_analyzer import (
     VideoAnalyzer,
     VideoProviderError,
 )
-from buddy.video_models import VideoEvent, VideoOverview
+from buddy.video_models import (
+    VideoDetailAnalysis,
+    VideoDetailObservation,
+    VideoEvent,
+    VideoOverview,
+)
 
 
 class FakeFiles:
@@ -143,6 +148,41 @@ def test_gemini_analyzer_normalizes_provider_failure_and_still_cleans_up(tmp_pat
     with pytest.raises(VideoProviderError, match="temporary provider failure"):
         asyncio.run(analyzer.analyze_overview(clip))
 
+    assert files.deleted_names == ["files/test-video"]
+
+
+def test_gemini_analyzer_creates_question_specific_detail(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"fake video content")
+    detail = VideoDetailAnalysis(
+        answer="Na tabliczce widnieje napis: Magazyn.",
+        observations=[
+            VideoDetailObservation(
+                start_seconds=12,
+                end_seconds=14,
+                description="Widoczna tabliczka z napisem Magazyn.",
+            )
+        ],
+    )
+    files = FakeFiles([types.FileState.ACTIVE])
+    models = FakeModels(types.GenerateContentResponse(parsed=detail))
+    analyzer = GeminiVideoAnalyzer(client=FakeClient(files, models))
+
+    result = asyncio.run(
+        analyzer.analyze_detail(
+            clip,
+            question="Co było napisane na tabliczce?",
+            start_seconds=10,
+            end_seconds=20,
+        )
+    )
+
+    assert result == detail
+    assert models.config is not None
+    assert models.config.response_schema is VideoDetailAnalysis
+    assert models.contents is not None
+    assert "Co było napisane" in str(models.contents[0])
+    assert "10.000 do 20.000" in str(models.contents[0])
     assert files.deleted_names == ["files/test-video"]
 
 

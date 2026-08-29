@@ -66,6 +66,37 @@ class VideoOverview(BaseModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
 
 
+class VideoDetailObservation(BaseModel):
+    """Question-relevant evidence at an absolute offset in one segment."""
+
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(ge=0)
+    description: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "VideoDetailObservation":
+        if self.end_seconds < self.start_seconds:
+            raise ValueError("A detailed observation cannot end before it starts.")
+        return self
+
+
+class VideoDetailAnalysis(BaseModel):
+    """Structured answer produced by re-reading one requested video range."""
+
+    answer: str = Field(min_length=1)
+    observations: list[VideoDetailObservation] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
+
+
+class VideoDetailAnswer(BaseModel):
+    """Bounded persisted result exposed by the detail-analysis tool."""
+
+    answer: str
+    sources: list[str] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
+    reused_existing_report: bool = False
+
+
 @dataclass(frozen=True, slots=True)
 class VideoSegment:
     """Metadata for a locally stored, completed video fragment."""

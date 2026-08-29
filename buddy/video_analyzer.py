@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from buddy.video_models import VideoOverview
+from buddy.video_models import VideoDetailAnalysis, VideoOverview
 
 
 class VideoAnalysisError(RuntimeError):
@@ -35,3 +35,34 @@ class VideoAnalyzer(Protocol):
     async def analyze_overview(self, video_path: Path) -> VideoOverview:
         """Create one structured fast report for a completed local video."""
         ...
+
+    async def analyze_detail(
+        self,
+        video_path: Path,
+        *,
+        question: str,
+        start_seconds: float,
+        end_seconds: float,
+    ) -> VideoDetailAnalysis:
+        """Answer one question by closely inspecting a bounded video range."""
+        ...
+
+
+@runtime_checkable
+class VideoDetailAnalyzer(Protocol):
+    """Narrow provider contract required by the on-demand detail service."""
+
+    @property
+    def provider(self) -> str: ...
+
+    @property
+    def model_name(self) -> str: ...
+
+    async def analyze_detail(
+        self,
+        video_path: Path,
+        *,
+        question: str,
+        start_seconds: float,
+        end_seconds: float,
+    ) -> VideoDetailAnalysis: ...
