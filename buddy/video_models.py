@@ -99,3 +99,17 @@ class VideoReport:
     model_name: str
     content: dict[str, object]
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class VideoContextUpdate:
+    """Persisted decision made from one overview by the video context butler."""
+
+    id: int
+    report_id: int
+    changed: bool
+    context: str
+    sources: list[str]
+    uncertainty: str | None
+    created_at: datetime
+    injected_at: datetime | None

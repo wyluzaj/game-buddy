@@ -7,6 +7,7 @@ import sqlite3
 from typing import Mapping
 
 from buddy.video_models import (
+    VideoContextUpdate,
     VideoReport,
     VideoReportMode,
     VideoSegment,
@@ -53,6 +54,22 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS video_context_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER NOT NULL UNIQUE,
+            changed INTEGER NOT NULL CHECK (changed IN (0, 1)),
+            context TEXT NOT NULL DEFAULT '',
+            sources_json TEXT NOT NULL DEFAULT '[]',
+            uncertainty TEXT,
+            created_at TEXT NOT NULL,
+            injected_at TEXT,
+            FOREIGN KEY (report_id)
+                REFERENCES video_reports (id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_video_segments_status_created
         ON video_segments (status, created_at)
         """
@@ -67,6 +84,12 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_video_reports_segment_mode
         ON video_reports (segment_id, mode, created_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_video_context_updates_pending
+        ON video_context_updates (changed, injected_at, created_at)
         """
     )
 
@@ -300,6 +323,105 @@ def get_video_reports(
     return [_report_from_row(row) for row in rows]
 
 
+def get_video_report(
+    conn: sqlite3.Connection,
+    report_id: int,
+) -> VideoReport | None:
+    """Return one exact persisted video report."""
+    row = conn.execute(
+        "SELECT * FROM video_reports WHERE id = ?",
+        (report_id,),
+    ).fetchone()
+    return _report_from_row(row) if row is not None else None
+
+
+def save_video_context_update(
+    conn: sqlite3.Connection,
+    *,
+    report_id: int,
+    changed: bool,
+    context: str,
+    sources: list[str],
+    uncertainty: str | None = None,
+) -> VideoContextUpdate:
+    """Persist one idempotency marker and optional replacement context state."""
+    normalized_context = context.strip()
+    normalized_sources = list(dict.fromkeys(source.strip() for source in sources if source.strip()))
+    if changed and (not normalized_context or not normalized_sources):
+        raise ValueError("A changed video context requires text and sources.")
+    if not changed:
+        normalized_context = ""
+        normalized_sources = []
+    normalized_uncertainty = uncertainty.strip() if uncertainty and uncertainty.strip() else None
+    now = datetime.now(timezone.utc).isoformat()
+    with conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO video_context_updates (
+                report_id,
+                changed,
+                context,
+                sources_json,
+                uncertainty,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                report_id,
+                int(changed),
+                normalized_context,
+                json.dumps(normalized_sources, ensure_ascii=False),
+                normalized_uncertainty,
+                now,
+            ),
+        )
+    update_id = cursor.lastrowid
+    if update_id is None:
+        raise RuntimeError("SQLite did not return an ID for the video context update.")
+    row = conn.execute(
+        "SELECT * FROM video_context_updates WHERE id = ?",
+        (update_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("The video context update could not be reloaded.")
+    return _context_update_from_row(row)
+
+
+def get_video_context_update_for_report(
+    conn: sqlite3.Connection,
+    report_id: int,
+) -> VideoContextUpdate | None:
+    """Return the existing Butler decision for one overview report."""
+    row = conn.execute(
+        "SELECT * FROM video_context_updates WHERE report_id = ?",
+        (report_id,),
+    ).fetchone()
+    return _context_update_from_row(row) if row is not None else None
+
+
+def get_latest_video_context(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: int | None,
+) -> VideoContextUpdate | None:
+    """Return the latest meaningful replacement state in one conversation."""
+    row = conn.execute(
+        """
+        SELECT updates.*
+        FROM video_context_updates AS updates
+        JOIN video_reports AS reports ON reports.id = updates.report_id
+        JOIN video_segments AS segments ON segments.id = reports.segment_id
+        WHERE updates.changed = 1
+          AND segments.conversation_id IS ?
+        ORDER BY segments.ended_at DESC, segments.id DESC, updates.id DESC
+        LIMIT 1
+        """,
+        (conversation_id,),
+    ).fetchone()
+    return _context_update_from_row(row) if row is not None else None
+
+
 def _normalize_file_path(file_path: str | Path) -> str:
     raw_path = str(file_path).strip()
     if not raw_path:
@@ -345,4 +467,21 @@ def _report_from_row(row: sqlite3.Row) -> VideoReport:
         model_name=row["model_name"],
         content=json.loads(row["report_json"]),
         created_at=_parse_datetime(row["created_at"]),
+    )
+
+
+def _context_update_from_row(row: sqlite3.Row) -> VideoContextUpdate:
+    return VideoContextUpdate(
+        id=row["id"],
+        report_id=row["report_id"],
+        changed=bool(row["changed"]),
+        context=row["context"],
+        sources=json.loads(row["sources_json"]),
+        uncertainty=row["uncertainty"],
+        created_at=_parse_datetime(row["created_at"]),
+        injected_at=(
+            _parse_datetime(row["injected_at"])
+            if row["injected_at"] is not None
+            else None
+        ),
     )
