@@ -229,3 +229,22 @@ def test_format_messages_excludes_harness_memory_injection():
 
     assert formatted == "User: Nowa wiadomość użytkownika"
     assert "stara pamięć" not in formatted
+
+
+def test_format_messages_excludes_replaceable_video_injection():
+    request = ModelRequest(
+        parts=[
+            SystemPromptPart(
+                content=(
+                    "[game-buddy.video-context.v1]\n"
+                    "Aktualnie gracz jest przy moście."
+                )
+            ),
+            UserPromptPart(content="Co widzisz?"),
+        ]
+    )
+
+    formatted = format_messages([request])
+
+    assert formatted == "User: Co widzisz?"
+    assert "przy moście" not in formatted

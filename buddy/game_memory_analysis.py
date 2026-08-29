@@ -86,6 +86,7 @@ async def update_game_profiles(
     *,
     game_documents: list[MemoryDocument],
     user_evidence_context: str,
+    video_evidence_context: str = "",
 ) -> int:
     """Merge one session into only its allowed game profiles."""
     if not game_documents:
@@ -95,6 +96,7 @@ async def update_game_profiles(
     prompt = _build_game_memory_prompt(
         profiles,
         user_evidence_context=user_evidence_context,
+        video_evidence_context=video_evidence_context,
     )
     result = await analyzer.run(prompt)
     updates_by_path = _validate_updates(result.output.updates, profiles)
@@ -159,6 +161,7 @@ def _build_game_memory_prompt(
     profiles: dict[str, CurrentGameProfile],
     *,
     user_evidence_context: str,
+    video_evidence_context: str = "",
 ) -> str:
     """Build bounded, clearly delimited input for game-profile consolidation."""
     current_profiles = "\n\n".join(
@@ -177,6 +180,7 @@ def _build_game_memory_prompt(
     return GAME_MEMORY_ANALYSIS_PROMPT.format(
         current_game_profiles=current_profiles,
         user_statements=user_statements,
+        video_observations=video_evidence_context.strip(),
     )
 
 

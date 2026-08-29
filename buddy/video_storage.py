@@ -445,6 +445,29 @@ def get_latest_pending_video_context(
     return _context_update_from_row(row) if row is not None else None
 
 
+def get_video_context_updates_for_conversation(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: int,
+    changed_only: bool = True,
+) -> list[VideoContextUpdate]:
+    """Return Butler decisions for one session in gameplay chronology."""
+    changed_clause = "AND updates.changed = 1" if changed_only else ""
+    rows = conn.execute(
+        f"""
+        SELECT updates.*
+        FROM video_context_updates AS updates
+        JOIN video_reports AS reports ON reports.id = updates.report_id
+        JOIN video_segments AS segments ON segments.id = reports.segment_id
+        WHERE segments.conversation_id = ?
+          {changed_clause}
+        ORDER BY segments.ended_at, segments.id, updates.id
+        """,
+        (conversation_id,),
+    ).fetchall()
+    return [_context_update_from_row(row) for row in rows]
+
+
 def mark_video_context_injected_through(
     conn: sqlite3.Connection,
     *,

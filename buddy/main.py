@@ -30,6 +30,7 @@ from buddy.video_storage import (
     get_latest_pending_video_context,
     mark_video_context_injected_through,
 )
+from buddy.video_session_memory import build_session_video_observations
 
 
 def main():
@@ -143,6 +144,10 @@ def main():
                                 finished["ended_at"]
                             ),
                             session_context=compacted_history,
+                            video_observations=build_session_video_observations(
+                                conn,
+                                conversation_id,
+                            ),
                         )
                     )
                 except Exception as error:

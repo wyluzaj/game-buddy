@@ -28,6 +28,7 @@ from buddy.session_memory import (
     persist_session_document,
 )
 from buddy.timed_compaction import format_messages
+from buddy.video_session_memory import build_session_video_observations
 
 
 class MemoryAnalysisResult(BaseModel):
@@ -257,6 +258,11 @@ async def process_pending_memories(
                     conversation_id,
                 )
 
+            video_observations = build_session_video_observations(
+                conn,
+                conversation_id,
+            )
+
             session_document = None
             if session_context:
                 session_document = await persist_session_document(
@@ -266,6 +272,7 @@ async def process_pending_memories(
                     started_at=parse_database_timestamp(row["created_at"]),
                     ended_at=parse_database_timestamp(row["ended_at"]),
                     session_context=session_context,
+                    video_observations=video_observations,
                 )
 
             raw_context = _load_raw_conversation_context(conn, conversation_id)
@@ -289,6 +296,7 @@ async def process_pending_memories(
                         memory,
                         game_documents=game_documents,
                         user_evidence_context=raw_context or session_context,
+                        video_evidence_context=video_observations,
                     )
             mark_memory_analyzed(conn, conversation_id)
             report.processed += 1

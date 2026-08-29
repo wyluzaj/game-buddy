@@ -65,7 +65,8 @@ def format_messages(messages: Sequence[ModelMessage]) -> str:
                     if user_text:
                         lines.append(f'User: {user_text}')
                 elif isinstance(part, SystemPromptPart):
-                    lines.append(f'System: {part.content}')
+                    if not part.content.startswith(_VIDEO_CONTEXT_PREFIX):
+                        lines.append(f'System: {part.content}')
                 elif isinstance(part, ToolReturnPart):
                     full_content = _stringify_tool_value(part.content)
                     content_str = full_content[:500]
