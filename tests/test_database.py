@@ -37,7 +37,11 @@ def test_finish_conversation_persists_compacted_history(db):
     """An ended session retains the final rolling summary and recent tail."""
     conversation_id = create_conversation(db)
 
-    finish_conversation(db, conversation_id, '[{"kind":"summary"}]')
+    finished = finish_conversation(
+        db,
+        conversation_id,
+        '[{"kind":"summary"}]',
+    )
 
     row = db.execute(
         """
@@ -50,6 +54,9 @@ def test_finish_conversation_persists_compacted_history(db):
     assert row["ended_at"] is not None
     assert row["compacted_history"] == '[{"kind":"summary"}]'
     assert row["memory_analyzed_at"] is None
+    assert finished["id"] == conversation_id
+    assert finished["created_at"] is not None
+    assert finished["ended_at"] == row["ended_at"]
 
 
 def test_only_ended_unanalyzed_conversations_are_pending(db):

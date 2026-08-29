@@ -21,6 +21,10 @@ from buddy.prompts import (
     LONG_TERM_MEMORY_ANALYSIS_PROMPT,
     LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
 )
+from buddy.session_memory import (
+    parse_database_timestamp,
+    persist_session_document,
+)
 from buddy.timed_compaction import format_messages
 
 
@@ -161,6 +165,16 @@ async def process_pending_memories(
                 session_context = _load_raw_conversation_context(
                     conn,
                     conversation_id,
+                )
+
+            if session_context:
+                await persist_session_document(
+                    conn,
+                    memory,
+                    conversation_id=conversation_id,
+                    started_at=parse_database_timestamp(row["created_at"]),
+                    ended_at=parse_database_timestamp(row["ended_at"]),
+                    session_context=session_context,
                 )
 
             changed = await update_long_term_memory(

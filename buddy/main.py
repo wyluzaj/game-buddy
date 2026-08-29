@@ -19,6 +19,10 @@ from buddy.database import (
 )
 from buddy.long_term_memory import create_long_term_memory
 from buddy.memory_analysis import build_memory_analyzer, process_pending_memories
+from buddy.session_memory import (
+    parse_database_timestamp,
+    persist_session_document,
+)
 from buddy.timed_compaction import format_messages
 
 
@@ -77,7 +81,28 @@ def main():
         try:
             if conversation_id is not None:
                 compacted_history = format_messages(history)
-                finish_conversation(conn, conversation_id, compacted_history)
+                finished = finish_conversation(
+                    conn,
+                    conversation_id,
+                    compacted_history,
+                )
+                try:
+                    asyncio.run(
+                        persist_session_document(
+                            conn,
+                            memory,
+                            conversation_id=conversation_id,
+                            started_at=parse_database_timestamp(
+                                finished["created_at"]
+                            ),
+                            ended_at=parse_database_timestamp(
+                                finished["ended_at"]
+                            ),
+                            session_context=compacted_history,
+                        )
+                    )
+                except Exception as error:
+                    print(f"[Session memory save failed: {error}]")
         finally:
             conn.close()
 
