@@ -13,6 +13,10 @@ from pydantic_ai_harness.memory import InMemoryStore, Memory
 from buddy.config import LONG_TERM_MEMORY_MODEL, Model
 from buddy.database import create_conversation, finish_conversation, save_messages
 from buddy.game_memory import game_memory_path
+from buddy.game_memory_analysis import (
+    GameMemoryAnalysisResult,
+    GameProfileUpdate,
+)
 from buddy.long_term_memory import MEMORY_STORE_PATH
 from buddy.memory_analysis import (
     MemoryAnalysisResult,
@@ -42,6 +46,21 @@ class StubAnalyzer:
     async def run(self, prompt: str) -> StubRunResult:
         self.prompts.append(prompt)
         return StubRunResult(output=self.output)
+
+
+@dataclass
+class StubGameRunResult:
+    output: GameMemoryAnalysisResult
+
+
+class StubGameAnalyzer:
+    def __init__(self, output: GameMemoryAnalysisResult):
+        self.output = output
+        self.prompts: list[str] = []
+
+    async def run(self, prompt: str) -> StubGameRunResult:
+        self.prompts.append(prompt)
+        return StubGameRunResult(output=self.output)
 
 
 class FailingThenUnchangedAnalyzer:
@@ -265,7 +284,10 @@ def test_compacted_session_links_all_explicit_games_from_raw_user_messages(db):
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content="Gram dziś w Elden Ring, a potem w Cyberpunk 2077."
+                        content=(
+                            "W Elden Ring gram magiem i chcę dotrzeć do zielonej "
+                            "wieży, a potem przełączę się na Cyberpunk 2077."
+                        )
                     )
                 ]
             )
@@ -284,21 +306,52 @@ def test_compacted_session_links_all_explicit_games_from_raw_user_messages(db):
             mentioned_games=["Elden Ring", "elden ring", "Cyberpunk 2077"],
         )
     )
+    game_analyzer = StubGameAnalyzer(
+        GameMemoryAnalysisResult(
+            updates=[
+                GameProfileUpdate(
+                    path=game_memory_path("Elden Ring"),
+                    changed=True,
+                    memory_markdown=(
+                        "# Elden Ring\n\n"
+                        "## Character and build\n"
+                        "- The user plays as a mage.\n\n"
+                        "## Current goals\n"
+                        "- Reach the green tower."
+                    ),
+                ),
+                GameProfileUpdate(
+                    path=game_memory_path("Cyberpunk 2077"),
+                    changed=False,
+                    memory_markdown="",
+                ),
+            ]
+        )
+    )
     memory = Memory(InMemoryStore())
 
-    report = asyncio.run(process_pending_memories(db, analyzer, memory))
+    report = asyncio.run(
+        process_pending_memories(db, analyzer, memory, game_analyzer)
+    )
     session = get_memory_document(
         db,
         session_memory_path(conversation_id),
     )
     elden_ring = get_memory_document(db, game_memory_path("Elden Ring"))
     cyberpunk = get_memory_document(db, game_memory_path("Cyberpunk 2077"))
+    elden_ring_file = asyncio.run(
+        memory.store.read(game_memory_path("Elden Ring"), max_chars=10_000)
+    )
 
     assert report.processed == 1
-    assert "User: Gram dziś w Elden Ring" in analyzer.prompts[0]
+    assert report.game_profiles_updated == 1
+    assert "User: W Elden Ring gram magiem" in analyzer.prompts[0]
+    assert "User: W Elden Ring gram magiem" in game_analyzer.prompts[0]
     assert session is not None
     assert elden_ring is not None
     assert cyberpunk is not None
+    assert elden_ring_file is not None
+    assert "The user plays as a mage" in elden_ring_file.content
     assert search_memory_documents(
         db,
         document_type=MemoryDocumentType.SESSION,

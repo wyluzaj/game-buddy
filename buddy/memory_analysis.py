@@ -22,6 +22,7 @@ from buddy.prompts import (
     LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
 )
 from buddy.game_memory import link_session_to_games
+from buddy.game_memory_analysis import GameMemoryAnalyzer, update_game_profiles
 from buddy.session_memory import (
     parse_database_timestamp,
     persist_session_document,
@@ -64,6 +65,7 @@ class MemoryProcessingReport:
 
     processed: int = 0
     updated: int = 0
+    game_profiles_updated: int = 0
     failed_conversation_ids: list[int] = field(default_factory=list)
 
 
@@ -201,6 +203,7 @@ async def process_pending_memories(
     conn: sqlite3.Connection,
     analyzer: MemoryAnalyzer,
     memory: Memory,
+    game_analyzer: GameMemoryAnalyzer | None = None,
 ) -> MemoryProcessingReport:
     """Process ended sessions once, leaving failed sessions pending for retry."""
     report = MemoryProcessingReport()
@@ -234,12 +237,21 @@ async def process_pending_memories(
                 user_evidence_context=raw_context or session_context,
             )
             if session_document is not None and applied.mentioned_games:
-                await link_session_to_games(
+                game_documents = await link_session_to_games(
                     conn,
                     memory,
                     session_document=session_document,
                     game_names=applied.mentioned_games,
                 )
+                if game_analyzer is not None:
+                    report.game_profiles_updated += await update_game_profiles(
+                        conn,
+                        game_analyzer,
+                        memory,
+                        game_documents=game_documents,
+                        session_context=session_context,
+                        user_evidence_context=raw_context or session_context,
+                    )
             mark_memory_analyzed(conn, conversation_id)
             report.processed += 1
             if applied.changed:

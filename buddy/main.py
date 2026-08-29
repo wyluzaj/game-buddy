@@ -18,6 +18,7 @@ from buddy.database import (
     save_messages,
 )
 from buddy.long_term_memory import create_long_term_memory
+from buddy.game_memory_analysis import build_game_memory_analyzer
 from buddy.memory_analysis import build_memory_analyzer, process_pending_memories
 from buddy.session_memory import (
     parse_database_timestamp,
@@ -37,12 +38,21 @@ def main():
     if pending:
         try:
             analyzer = build_memory_analyzer()
-            report = asyncio.run(process_pending_memories(conn, analyzer, memory))
+            game_analyzer = build_game_memory_analyzer()
+            report = asyncio.run(
+                process_pending_memories(
+                    conn,
+                    analyzer,
+                    memory,
+                    game_analyzer,
+                )
+            )
             if report.processed:
                 print(
                     "Long-term memory: "
                     f"processed {report.processed} session(s), "
-                    f"updated by {report.updated}."
+                    f"global updates {report.updated}, "
+                    f"game profiles updated {report.game_profiles_updated}."
                 )
             if report.failed_conversation_ids:
                 failed = ", ".join(map(str, report.failed_conversation_ids))
