@@ -135,6 +135,35 @@ def get_video_segment(
     return _segment_from_row(row) if row is not None else None
 
 
+def claim_video_segment_for_analysis(
+    conn: sqlite3.Connection,
+    segment_id: int,
+) -> VideoSegment | None:
+    """Atomically move one pending or failed segment into processing state."""
+    now = datetime.now(timezone.utc).isoformat()
+    with conn:
+        cursor = conn.execute(
+            """
+            UPDATE video_segments
+            SET status = ?, error = NULL, updated_at = ?
+            WHERE id = ? AND status IN (?, ?)
+            """,
+            (
+                VideoSegmentStatus.PROCESSING.value,
+                now,
+                segment_id,
+                VideoSegmentStatus.PENDING.value,
+                VideoSegmentStatus.FAILED.value,
+            ),
+        )
+    if cursor.rowcount == 0:
+        return None
+    claimed = get_video_segment(conn, segment_id)
+    if claimed is None:
+        raise RuntimeError("The claimed video segment could not be reloaded.")
+    return claimed
+
+
 def update_video_segment_status(
     conn: sqlite3.Connection,
     segment_id: int,
