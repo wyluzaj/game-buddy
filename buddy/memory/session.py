@@ -1,8 +1,8 @@
 """Persist completed short-memory snapshots as searchable session documents."""
 
-from datetime import datetime, timezone
 import re
 import sqlite3
+from datetime import datetime, timezone
 
 from pydantic_ai_harness.memory import Memory
 

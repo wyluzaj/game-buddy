@@ -259,6 +259,14 @@ and are deleted after generation whenever cleanup succeeds.
 | `tests/test_video_pipeline.py` | Overview-to-context pipeline and partial-failure recovery |
 | `tests/test_video_cli.py` | Parser defaults, input validation, exit codes, and CLI orchestration |
 
+## Quality and dependency controls
+
+`pyproject.toml` is the source of supported dependency ranges and configures pytest,
+Ruff, and Pyright. `requirements-lock.txt` records the fully resolved development
+environment for reproducible installation. `.github/workflows/ci.yml` runs linting,
+production-code type checks, and the complete test suite on Python 3.10 and 3.14; total
+coverage must remain at or above 80%.
+
 ## Current scope boundary
 
 Implemented:

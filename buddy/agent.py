@@ -1,17 +1,18 @@
 """Pydantic AI Agent factory."""
 import sqlite3
+from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
+from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.memory import Memory
 
 from buddy.config import AGENT, MODELS, build_model
+from buddy.memory.compaction import SummarizingCompactionTimed
 from buddy.memory.long_term import create_long_term_memory
 from buddy.memory.recall import create_recall_memory_tool
 from buddy.prompts import CHAT_AGENT_INSTRUCTIONS
-from buddy.memory.compaction import SummarizingCompactionTimed
 from buddy.video.detail_tool import create_analyze_video_detail_tool
 
 
@@ -23,7 +24,7 @@ def build_agent(
 ) -> Agent:
     """Builds and returns an Agent instance with the specified model and instructions."""
     long_term_memory = memory or create_long_term_memory()
-    tools = [duckduckgo_search_tool()]
+    tools: list[Any] = [duckduckgo_search_tool()]
     if memory_connection is not None:
         tools.append(
             create_recall_memory_tool(memory_connection, long_term_memory)

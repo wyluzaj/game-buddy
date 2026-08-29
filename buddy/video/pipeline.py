@@ -1,9 +1,9 @@
 """End-to-end orchestration for overview analysis and compact video context."""
 
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-import sqlite3
 
 from pydantic_ai import RunUsage
 

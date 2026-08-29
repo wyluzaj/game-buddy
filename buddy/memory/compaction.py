@@ -6,11 +6,11 @@ message-count floor.
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import json
-import re
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -26,12 +26,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from buddy.prompts import (
-    SHORT_TERM_MEMORY_SUMMARIZER_INSTRUCTIONS,
-    SHORT_TERM_MEMORY_SUMMARY_PROMPT,
-)
-from buddy.prompts import VIDEO_CONTEXT_MARKER
-
 # Harness does not expose the cutoff and tracing helpers through its public API.
 # This capability intentionally mirrors Harness SummarizingCompaction and therefore
 # depends on the same internal helpers as the upstream implementation.
@@ -41,6 +35,12 @@ from pydantic_ai_harness.compaction._shared import (
     compact_with_span,
     context_for_request,
     find_first_user_message,
+)
+
+from buddy.prompts import (
+    SHORT_TERM_MEMORY_SUMMARIZER_INSTRUCTIONS,
+    SHORT_TERM_MEMORY_SUMMARY_PROMPT,
+    VIDEO_CONTEXT_MARKER,
 )
 
 if TYPE_CHECKING:

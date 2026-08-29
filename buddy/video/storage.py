@@ -1,10 +1,10 @@
 """SQLite metadata and report storage for locally recorded video segments."""
 
+import json
+import sqlite3
 from datetime import datetime, timezone
 from hashlib import sha256
-import json
 from pathlib import Path
-import sqlite3
 from typing import Mapping
 
 from pydantic import ValidationError

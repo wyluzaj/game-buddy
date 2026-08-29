@@ -1,8 +1,8 @@
 """Curate game-specific long-term profiles from completed session reports."""
 
-from dataclasses import dataclass
 import re
 import sqlite3
+from dataclasses import dataclass
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -11,12 +11,12 @@ from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai_harness.memory import Memory
 
 from buddy.config import MEMORY, MODELS, build_model
+from buddy.memory.compaction import extract_user_evidence
 from buddy.memory.index import (
     MemoryDocument,
     MemoryDocumentType,
     index_memory_document,
 )
-from buddy.memory.compaction import extract_user_evidence
 from buddy.prompts import (
     GAME_MEMORY_ANALYSIS_PROMPT,
     GAME_MEMORY_ANALYZER_INSTRUCTIONS,

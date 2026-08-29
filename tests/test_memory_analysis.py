@@ -13,25 +13,25 @@ from pydantic_ai_harness.memory import InMemoryStore, Memory
 
 from buddy.config import MODEL_TIERS, MODELS
 from buddy.database import create_conversation, finish_conversation, save_messages
+from buddy.memory.analysis import (
+    MemoryAnalysisResult,
+    build_memory_analysis_prompt,
+    build_memory_analyzer,
+    process_pending_memories,
+    render_global_memory,
+    update_long_term_memory,
+)
 from buddy.memory.game import game_memory_path
 from buddy.memory.game_analysis import (
     GameMemoryAnalysisResult,
     GameProfileUpdate,
-)
-from buddy.memory.long_term import MEMORY_STORE_PATH
-from buddy.memory.analysis import (
-    MemoryAnalysisResult,
-    build_memory_analyzer,
-    build_memory_analysis_prompt,
-    process_pending_memories,
-    render_global_memory,
-    update_long_term_memory,
 )
 from buddy.memory.index import (
     MemoryDocumentType,
     get_memory_document,
     search_memory_documents,
 )
+from buddy.memory.long_term import MEMORY_STORE_PATH
 from buddy.memory.session import session_memory_path
 from buddy.video.models import VideoOverview, VideoReportMode
 from buddy.video.storage import (

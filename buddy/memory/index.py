@@ -1,13 +1,14 @@
 """Bounded SQLite indexing and relationships for persisted memory documents."""
 
+import re
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import PurePosixPath
-import re
-import sqlite3
 
 from buddy.config import MEMORY
+
 
 class MemoryDocumentType(str, Enum):
     """Kinds of memory documents currently supported by the application."""

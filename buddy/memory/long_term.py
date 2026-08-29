@@ -7,7 +7,6 @@ from pydantic_ai_harness.memory import Memory, SqliteMemoryStore
 from buddy.config import STORAGE
 from buddy.prompts import LONG_TERM_MEMORY_GUIDANCE
 
-
 MEMORY_STORE_PATH = f"{STORAGE.memory_agent_name}/MEMORY.md"
 
 

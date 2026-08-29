@@ -1,7 +1,7 @@
 """Consolidate completed sessions into long-term Harness Memory."""
 
-from dataclasses import dataclass, field
 import sqlite3
+from dataclasses import dataclass, field
 from typing import Annotated, Protocol
 
 from pydantic import BaseModel, Field
@@ -16,7 +16,14 @@ from buddy.database import (
     get_messages,
     mark_memory_analyzed,
 )
-from buddy.memory.long_term import MEMORY_STORE_PATH
+from buddy.memory.compaction import (
+    extract_user_evidence,
+    format_messages,
+    format_user_evidence,
+)
+from buddy.memory.game import link_session_to_games
+from buddy.memory.game_analysis import GameMemoryAnalyzer, update_game_profiles
+from buddy.memory.index import get_memory_document
 from buddy.memory.journal import (
     MemoryProcessingStage,
     checkpoint_memory_job,
@@ -24,25 +31,17 @@ from buddy.memory.journal import (
     get_or_create_memory_job,
     record_memory_job_failure,
 )
-from buddy.prompts import (
-    LONG_TERM_MEMORY_ANALYSIS_PROMPT,
-    LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
-)
-from buddy.memory.game import link_session_to_games
-from buddy.memory.game_analysis import GameMemoryAnalyzer, update_game_profiles
-from buddy.memory.index import get_memory_document
+from buddy.memory.long_term import MEMORY_STORE_PATH
 from buddy.memory.session import (
     parse_database_timestamp,
     persist_session_document,
     session_memory_path,
 )
-from buddy.memory.compaction import (
-    extract_user_evidence,
-    format_messages,
-    format_user_evidence,
+from buddy.prompts import (
+    LONG_TERM_MEMORY_ANALYSIS_PROMPT,
+    LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
 )
 from buddy.video.session_memory import build_session_video_observations
-
 
 GlobalMemoryFact = Annotated[
     str,
@@ -315,18 +314,21 @@ async def process_pending_memories(
                 )
 
             raw_messages = _load_raw_conversation_messages(conn, conversation_id)
-            raw_context = format_messages(raw_messages)
             user_evidence = format_user_evidence(raw_messages)
             if job.stage >= MemoryProcessingStage.GLOBAL_APPLIED:
                 if job.analysis is None:
                     raise RuntimeError(
                         "Memory journal is missing its analyzer result."
                     )
+                game_names = job.analysis.get("games_with_user_state", [])
+                if not isinstance(game_names, list):
+                    raise RuntimeError(
+                        "Memory journal contains invalid game analysis data."
+                    )
                 applied = AppliedMemoryAnalysis(
                     changed=bool(job.analysis.get("changed")),
                     games_with_user_state=[
-                        str(name)
-                        for name in job.analysis.get("games_with_user_state", [])
+                        str(name) for name in game_names
                     ],
                 )
             else:

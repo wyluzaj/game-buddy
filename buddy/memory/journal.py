@@ -1,9 +1,9 @@
 """Durable checkpoints for the cross-database memory workflow."""
 
-from dataclasses import dataclass
-from enum import IntEnum
 import json
 import sqlite3
+from dataclasses import dataclass
+from enum import IntEnum
 
 
 class MemoryProcessingStage(IntEnum):

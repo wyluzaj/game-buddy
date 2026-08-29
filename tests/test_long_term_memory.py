@@ -6,12 +6,12 @@ from pydantic_ai_harness.memory import InMemoryStore, Memory
 
 from buddy.agent import build_agent
 from buddy.config import MODEL_TIERS, MODELS
+from buddy.memory.compaction import SummarizingCompactionTimed
 from buddy.memory.long_term import (
-    InjectionOnlyMemory,
     MEMORY_STORE_PATH,
+    InjectionOnlyMemory,
     create_long_term_memory,
 )
-from buddy.memory.compaction import SummarizingCompactionTimed
 
 
 def test_long_term_memory_persists_between_store_instances(tmp_path):

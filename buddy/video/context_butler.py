@@ -1,7 +1,7 @@
 """Delegate that maintains a bounded replacement snapshot of observed gameplay."""
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from typing import Protocol
 
 from pydantic import BaseModel, Field

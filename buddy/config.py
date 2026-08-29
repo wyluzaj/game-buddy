@@ -1,8 +1,8 @@
 """Central application configuration grouped by functional area."""
 
+import os
 from dataclasses import dataclass
 from enum import Enum
-import os
 
 from pydantic_ai.models.fallback import FallbackModel
 

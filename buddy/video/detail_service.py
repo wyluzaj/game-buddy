@@ -1,10 +1,10 @@
 """Secure, idempotent detailed analysis of application-owned video sources."""
 
 import asyncio
-from dataclasses import dataclass
-from hashlib import sha256
 import re
 import sqlite3
+from dataclasses import dataclass
+from hashlib import sha256
 
 from pydantic import ValidationError
 
@@ -22,7 +22,6 @@ from buddy.video.storage import (
     get_video_segment,
     save_video_report,
 )
-
 
 _VIDEO_SOURCE_PATTERN = re.compile(
     r"^video://segment/(?P<segment_id>[1-9]\d*)"

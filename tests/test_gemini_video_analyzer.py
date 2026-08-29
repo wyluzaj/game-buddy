@@ -4,12 +4,12 @@ from pathlib import Path
 import pytest
 from google.genai import types
 
-from buddy.video.gemini import GeminiVideoAnalyzer
 from buddy.video.analyzer import (
     InvalidVideoFileError,
     VideoAnalyzer,
     VideoProviderError,
 )
+from buddy.video.gemini import GeminiVideoAnalyzer
 from buddy.video.models import (
     VideoDetailAnalysis,
     VideoDetailObservation,

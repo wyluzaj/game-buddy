@@ -2,19 +2,20 @@
 
 import argparse
 import asyncio
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 import sqlite3
 import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import cast
 
 from dotenv import load_dotenv
 from pydantic_ai.exceptions import AgentRunError
 
 from buddy.config import STORAGE, VIDEO
 from buddy.database import init_db
-from buddy.video.gemini import GeminiVideoAnalyzer
 from buddy.video.analyzer import VideoAnalysisError
-from buddy.video.context_butler import build_video_context_butler
+from buddy.video.context_butler import VideoContextButler, build_video_context_butler
+from buddy.video.gemini import GeminiVideoAnalyzer
 from buddy.video.pipeline import VideoProcessingOutcome, process_video_file
 
 
@@ -99,7 +100,7 @@ async def _run_analysis(
         return await process_video_file(
             conn,
             analyzer,
-            context_butler,
+            cast(VideoContextButler, context_butler),
             file_path=video_path,
             started_at=started_at,
             ended_at=ended_at,

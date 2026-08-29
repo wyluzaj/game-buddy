@@ -1,10 +1,10 @@
 """Bounded retrieval of game profiles and related session memories."""
 
-from datetime import date, datetime, time, timedelta, timezone
-from enum import Enum
 import re
 import sqlite3
-from typing import Awaitable, Callable
+from datetime import date, datetime, time, timedelta, timezone
+from enum import Enum
+from typing import Awaitable, Callable, cast
 
 from pydantic import BaseModel
 from pydantic_ai import RunContext, RunUsage
@@ -294,7 +294,7 @@ def create_recall_memory_tool(
     service = MemoryRecallService(conn, memory)
     coordinator = MemoryRecallCoordinator(
         service,
-        context_butler or build_context_butler(),
+        context_butler or cast(ContextButler, build_context_butler()),
     )
 
     async def recall_memory(

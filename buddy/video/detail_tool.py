@@ -1,15 +1,14 @@
 """Pydantic AI tool for question-specific re-analysis of stored gameplay."""
 
-from collections.abc import Awaitable, Callable
 import sqlite3
+from collections.abc import Awaitable, Callable
 
 from pydantic_ai import RunContext
 
 from buddy.config import MODELS
-from buddy.video.gemini import GeminiVideoAnalyzer
 from buddy.video.detail_service import analyze_video_detail_source
+from buddy.video.gemini import GeminiVideoAnalyzer
 from buddy.video.models import VideoDetailAnswer
-
 
 AnalyzeVideoDetailTool = Callable[..., Awaitable[VideoDetailAnswer]]
 

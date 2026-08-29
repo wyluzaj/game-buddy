@@ -1,4 +1,5 @@
 import pytest
+
 from buddy.database import init_db
 
 

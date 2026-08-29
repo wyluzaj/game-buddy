@@ -22,7 +22,6 @@ from buddy.video.analyzer import (
 )
 from buddy.video.models import VideoDetailAnalysis, VideoOverview
 
-
 StructuredVideoResult = TypeVar("StructuredVideoResult", bound=BaseModel)
 
 
