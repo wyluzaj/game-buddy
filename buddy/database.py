@@ -2,6 +2,7 @@
 import sqlite3
 from pathlib import Path
 
+from buddy.memory_index import init_memory_index
 
 _CONVERSATION_COLUMNS: dict[str, str] = {
     "ended_at": "TIMESTAMP",
@@ -57,6 +58,7 @@ def init_db(db_path: str = "data/chatbot.db") -> sqlite3.Connection:
                  )
                  ''')
 
+    init_memory_index(conn)
     conn.commit()
     return conn
 

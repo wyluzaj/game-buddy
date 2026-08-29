@@ -68,7 +68,7 @@ def test_only_ended_unanalyzed_conversations_are_pending(db):
 
 
 def test_init_db_migrates_existing_conversations_table(tmp_path):
-    """Existing chatbot databases receive the long-term-memory state columns."""
+    """Existing databases receive conversation state and the memory index."""
     database_path = tmp_path / "legacy.db"
     legacy = sqlite3.connect(database_path)
     legacy.execute(
@@ -88,6 +88,21 @@ def test_init_db_migrates_existing_conversations_table(tmp_path):
         row["name"]
         for row in migrated.execute("PRAGMA table_info(conversations)").fetchall()
     }
+    memory_tables = {
+        row["name"]
+        for row in migrated.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE name IN ('memory_documents', 'memory_relations', 'memory_search')
+            """
+        ).fetchall()
+    }
     migrated.close()
 
     assert {"ended_at", "compacted_history", "memory_analyzed_at"} <= columns
+    assert memory_tables == {
+        "memory_documents",
+        "memory_relations",
+        "memory_search",
+    }
