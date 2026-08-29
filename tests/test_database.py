@@ -101,7 +101,13 @@ def test_init_db_migrates_existing_conversations_table(tmp_path):
             """
             SELECT name
             FROM sqlite_master
-            WHERE name IN ('memory_documents', 'memory_relations', 'memory_search')
+            WHERE name IN (
+                'memory_documents',
+                'memory_relations',
+                'memory_search',
+                'video_segments',
+                'video_reports'
+            )
             """
         ).fetchall()
     }
@@ -112,4 +118,6 @@ def test_init_db_migrates_existing_conversations_table(tmp_path):
         "memory_documents",
         "memory_relations",
         "memory_search",
+        "video_segments",
+        "video_reports",
     }
