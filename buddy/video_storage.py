@@ -422,6 +422,85 @@ def get_latest_video_context(
     return _context_update_from_row(row) if row is not None else None
 
 
+def get_latest_pending_video_context(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: int,
+) -> VideoContextUpdate | None:
+    """Return the newest meaningful state not yet shown to its chat session."""
+    row = conn.execute(
+        """
+        SELECT updates.*
+        FROM video_context_updates AS updates
+        JOIN video_reports AS reports ON reports.id = updates.report_id
+        JOIN video_segments AS segments ON segments.id = reports.segment_id
+        WHERE updates.changed = 1
+          AND updates.injected_at IS NULL
+          AND segments.conversation_id = ?
+        ORDER BY segments.ended_at DESC, segments.id DESC, updates.id DESC
+        LIMIT 1
+        """,
+        (conversation_id,),
+    ).fetchone()
+    return _context_update_from_row(row) if row is not None else None
+
+
+def mark_video_context_injected_through(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: int,
+    update_id: int,
+) -> None:
+    """Acknowledge the selected state and every older state it supersedes."""
+    target = conn.execute(
+        """
+        SELECT segments.ended_at, segments.id AS segment_id
+        FROM video_context_updates AS updates
+        JOIN video_reports AS reports ON reports.id = updates.report_id
+        JOIN video_segments AS segments ON segments.id = reports.segment_id
+        WHERE updates.id = ?
+          AND segments.conversation_id = ?
+        """,
+        (update_id, conversation_id),
+    ).fetchone()
+    if target is None:
+        raise ValueError(
+            f"Video context update {update_id} does not belong to conversation "
+            f"{conversation_id}."
+        )
+    now = datetime.now(timezone.utc).isoformat()
+    with conn:
+        conn.execute(
+            """
+            UPDATE video_context_updates
+            SET injected_at = ?
+            WHERE injected_at IS NULL
+              AND id IN (
+                  SELECT updates.id
+                  FROM video_context_updates AS updates
+                  JOIN video_reports AS reports ON reports.id = updates.report_id
+                  JOIN video_segments AS segments ON segments.id = reports.segment_id
+                  WHERE updates.changed = 1
+                    AND segments.conversation_id = ?
+                    AND (
+                        segments.ended_at < ?
+                        OR (
+                            segments.ended_at = ?
+                            AND segments.id <= ?
+                        )
+                    )
+              )
+            """,
+            (
+                now,
+                conversation_id,
+                target["ended_at"],
+                target["ended_at"],
+                target["segment_id"],
+            ),
+        )
+
+
 def _normalize_file_path(file_path: str | Path) -> str:
     raw_path = str(file_path).strip()
     if not raw_path:

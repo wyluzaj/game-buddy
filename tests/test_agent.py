@@ -42,6 +42,18 @@ def make_summary(minutes_ago: int = 60) -> ModelRequest:
     )
 
 
+def make_video_context(content: str, minutes_ago: int = 60) -> ModelRequest:
+    ts = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    return ModelRequest(
+        parts=[
+            SystemPromptPart(
+                content=f"[game-buddy.video-context.v1]\n{content}"
+            )
+        ],
+        timestamp=ts,
+    )
+
+
 def compact_with_fake_summary(
     monkeypatch: pytest.MonkeyPatch,
     capability: SummarizingCompactionTimed,
@@ -163,6 +175,38 @@ def test_incremental_summary_receives_only_newly_expired_messages(monkeypatch):
     ]
     assert len(summary_parts) == 1
     assert summary_parts[0].content == f"{_SUMMARY_PREFIX}updated summary"
+
+
+def test_compaction_preserves_latest_video_context_without_summarizing_it(
+    monkeypatch,
+):
+    """Replaceable visual state remains separate from the rolling chat summary."""
+    cap = SummarizingCompactionTimed()
+    old_context = make_video_context("Stare drzwi.", minutes_ago=70)
+    expired_chat = make_msg(60, "Weszłam do zamku.")
+    latest_context = make_video_context("Aktualnie jestem przy moście.", minutes_ago=40)
+    messages = [
+        old_context,
+        expired_chat,
+        latest_context,
+        *[make_msg(1) for _ in range(15)],
+    ]
+
+    result, calls = compact_with_fake_summary(monkeypatch, cap, messages)
+
+    assert len(calls) == 1
+    assert calls[0][0] == [expired_chat]
+    video_parts = [
+        part
+        for message in result
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
+        and part.content.startswith("[game-buddy.video-context.v1]")
+    ]
+    assert len(video_parts) == 1
+    assert "Aktualnie jestem przy moście" in video_parts[0].content
+    assert "Stare drzwi" not in video_parts[0].content
 
 
 def test_format_messages_excludes_harness_memory_injection():
