@@ -7,6 +7,7 @@ import pytest
 from buddy.video_analysis_service import (
     VideoSegmentStateError,
     analyze_video_segment,
+    register_and_analyze_video,
 )
 from buddy.video_analyzer import VideoProviderError
 from buddy.video_models import VideoOverview, VideoSegmentStatus
@@ -118,3 +119,39 @@ def test_processing_segment_cannot_be_claimed_by_a_second_worker(db, tmp_path):
         asyncio.run(analyze_video_segment(db, analyzer, segment.id))
 
     assert analyzer.calls == []
+
+
+def test_registering_the_same_file_twice_reuses_segment_and_report(db, tmp_path):
+    """A repeated CLI invocation is safe and does not duplicate API work."""
+    video_path = tmp_path / "manual-clip.mp4"
+    video_path.write_bytes(b"gameplay clip")
+    started_at = datetime(2026, 8, 29, 18, 0, tzinfo=timezone.utc)
+    ended_at = started_at + timedelta(minutes=2)
+    analyzer = StubVideoAnalyzer([VideoOverview(summary="Gotowy raport.")])
+
+    first = asyncio.run(
+        register_and_analyze_video(
+            db,
+            analyzer,
+            file_path=video_path,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+    )
+    second = asyncio.run(
+        register_and_analyze_video(
+            db,
+            analyzer,
+            file_path=video_path,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+    )
+
+    segment_count = db.execute(
+        "SELECT COUNT(*) AS count FROM video_segments"
+    ).fetchone()["count"]
+    assert segment_count == 1
+    assert second.segment.id == first.segment.id
+    assert second.reused_existing_report is True
+    assert analyzer.calls == [video_path]

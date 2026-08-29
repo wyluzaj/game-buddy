@@ -2,6 +2,8 @@
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 import sqlite3
 
 from pydantic import ValidationError
@@ -16,8 +18,10 @@ from buddy.video_models import (
 )
 from buddy.video_storage import (
     claim_video_segment_for_analysis,
+    create_video_segment,
     get_video_reports,
     get_video_segment,
+    get_video_segment_by_path,
     save_video_report,
     update_video_segment_status,
 )
@@ -38,6 +42,27 @@ class VideoAnalysisOutcome:
     report: VideoReport
     overview: VideoOverview
     reused_existing_report: bool
+
+
+async def register_and_analyze_video(
+    conn: sqlite3.Connection,
+    analyzer: VideoAnalyzer,
+    *,
+    file_path: str | Path,
+    started_at: datetime,
+    ended_at: datetime,
+    conversation_id: int | None = None,
+) -> VideoAnalysisOutcome:
+    """Register one local recording once, then run or reuse its overview."""
+    existing = get_video_segment_by_path(conn, file_path)
+    segment = existing or create_video_segment(
+        conn,
+        file_path=file_path,
+        started_at=started_at,
+        ended_at=ended_at,
+        conversation_id=conversation_id,
+    )
+    return await analyze_video_segment(conn, analyzer, segment.id)
 
 
 async def analyze_video_segment(

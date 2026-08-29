@@ -135,6 +135,19 @@ def get_video_segment(
     return _segment_from_row(row) if row is not None else None
 
 
+def get_video_segment_by_path(
+    conn: sqlite3.Connection,
+    file_path: str | Path,
+) -> VideoSegment | None:
+    """Return a previously registered segment for one normalized local path."""
+    normalized_path = _normalize_file_path(file_path)
+    row = conn.execute(
+        "SELECT * FROM video_segments WHERE file_path = ?",
+        (normalized_path,),
+    ).fetchone()
+    return _segment_from_row(row) if row is not None else None
+
+
 def claim_video_segment_for_analysis(
     conn: sqlite3.Connection,
     segment_id: int,
@@ -291,7 +304,7 @@ def _normalize_file_path(file_path: str | Path) -> str:
     raw_path = str(file_path).strip()
     if not raw_path:
         raise ValueError("A video segment file path cannot be empty.")
-    return str(Path(raw_path))
+    return str(Path(raw_path).expanduser().resolve(strict=False))
 
 
 def _normalize_datetime(value: datetime) -> datetime:
