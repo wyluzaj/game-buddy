@@ -269,6 +269,10 @@ coverage must remain at or above 80%.
 
 ## Current scope boundary
 
+Operational setup, environment variables, privacy boundaries, paired-database backup and
+deletion, troubleshooting, and contributor quality commands are maintained in `README.md`.
+This map remains the source for module ownership and code-to-storage relationships.
+
 Implemented:
 
 - manual analysis of completed local video files;
