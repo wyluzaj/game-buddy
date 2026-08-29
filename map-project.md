@@ -124,7 +124,12 @@ recall_memory
 
 Global memory is based on explicit user statements. Video observations may enrich a
 confirmed game's profile and session report, but they cannot become global user facts by
-themselves.
+themselves. Raw structured `ModelMessage` objects are the preferred evidence source;
+complete user prompts are JSON-encoded one per line before they reach either memory
+analyzer, so multiline content and role-like text inside a user message are preserved.
+The global analyzer returns a structured replacement list in `global_facts` plus separate
+`games_with_user_state`; `memory.analysis.render_global_memory` is the only component that
+turns global facts into Markdown. This removes substring-based deletion of model output.
 
 ## Storage map
 
@@ -190,7 +195,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/memory/session.py` | Logical `main/sessions/*.md` reports and indexing | Called at shutdown and pending-memory processing |
 | `buddy/memory/index.py` | Memory metadata, FTS5 search, and session-to-game relations | Used by session/game memory and recall |
 | `buddy/memory/analysis.py` | Completed-session global consolidation coordinator | Updates global memory, session documents, and game profiles |
-| `buddy/memory/game.py` | Game-name normalization, paths, documents, and relations | Used by memory analysis and recall |
+| `buddy/memory/game.py` | Game-name normalization, collision-safe paths, documents, and relations | Used by memory analysis and recall; adds a title hash only when two distinct titles share a slug |
 | `buddy/memory/game_analysis.py` | Source-aware updates of allowed `main/games/*.md` profiles | Receives explicit user evidence and video observations |
 | `buddy/memory/recall.py` | Bounded historical retrieval and reduction | Uses the memory index, Harness store, and Context Butler |
 | `buddy/memory/context_butler.py` | Small agent reducing recalled memory documents | Used only by `memory.recall.py` |

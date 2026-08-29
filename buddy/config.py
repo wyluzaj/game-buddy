@@ -68,6 +68,8 @@ class MemorySettings:
     """Bounds for durable memory, search, and Context Butler output."""
 
     global_document_chars: int = 100_000
+    global_facts: int = 100
+    global_fact_chars: int = 500
     session_document_chars: int = 1_000_000
     session_index_summary_chars: int = 500
     game_name_chars: int = 100

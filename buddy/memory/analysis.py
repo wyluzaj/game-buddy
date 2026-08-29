@@ -2,11 +2,11 @@
 
 from dataclasses import dataclass, field
 import sqlite3
-from typing import Protocol
+from typing import Annotated, Protocol
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai_harness.memory import Memory
 
@@ -27,15 +27,31 @@ from buddy.memory.session import (
     parse_database_timestamp,
     persist_session_document,
 )
-from buddy.memory.compaction import format_messages
+from buddy.memory.compaction import (
+    extract_user_evidence,
+    format_messages,
+    format_user_evidence,
+)
 from buddy.video.session_memory import build_session_video_observations
+
+
+GlobalMemoryFact = Annotated[
+    str,
+    Field(min_length=1, max_length=MEMORY.global_fact_chars),
+]
 
 
 class MemoryAnalysisResult(BaseModel):
     """Structured decision returned by the long-term-memory curator."""
 
     changed: bool
-    memory_markdown: str
+    global_facts: list[GlobalMemoryFact] = Field(
+        default_factory=list,
+        max_length=MEMORY.global_facts,
+        description=(
+            "Complete replacement list of durable, game-independent user facts."
+        ),
+    )
     games_with_user_state: list[str] = Field(
         default_factory=list,
         max_length=8,
@@ -90,36 +106,25 @@ def build_memory_analyzer(
         instructions=LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
         output_type=MemoryAnalysisResult,
     )
-    analyzer.output_validator(sanitize_global_memory_scope)
     return analyzer
 
 
-def sanitize_global_memory_scope(
-    analysis: MemoryAnalysisResult,
-) -> MemoryAnalysisResult:
-    """Remove model-proposed global-memory lines tied to detected games."""
-    game_names = [
-        game.strip().casefold()
-        for game in analysis.games_with_user_state
-        if game.strip()
-    ]
-    if not game_names:
-        return analysis
-
-    kept_lines = [
-        line
-        for line in analysis.memory_markdown.splitlines()
-        if not any(game_name in line.casefold() for game_name in game_names)
-    ]
-    cleaned_memory = "\n".join(kept_lines).strip()
-    if cleaned_memory == analysis.memory_markdown.strip():
-        return analysis
-    return analysis.model_copy(
-        update={
-            "changed": analysis.changed and bool(cleaned_memory),
-            "memory_markdown": cleaned_memory,
-        }
-    )
+def render_global_memory(facts: list[str]) -> str:
+    """Render validated facts into the only supported MEMORY.md shape."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for fact in facts:
+        clean = " ".join(fact.removeprefix("- ").split()).strip()
+        if not clean:
+            continue
+        key = clean.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(clean)
+    if not normalized:
+        return ""
+    return "# User Memory\n\n" + "\n".join(f"- {fact}" for fact in normalized)
 
 
 def build_memory_analysis_prompt(
@@ -131,11 +136,7 @@ def build_memory_analysis_prompt(
     """Build a clearly delimited prompt for memory consolidation."""
     current = current_memory or "(MEMORY.md jest obecnie puste)"
     evidence = user_evidence_context or session_context
-    user_statements = "\n".join(
-        line
-        for line in evidence.splitlines()
-        if line.lstrip().startswith("User:")
-    )
+    user_statements = extract_user_evidence(evidence)
     return LONG_TERM_MEMORY_ANALYSIS_PROMPT.format(
         current_memory=current,
         user_statements=user_statements,
@@ -169,10 +170,7 @@ async def _apply_long_term_memory(
     if not session_context:
         return AppliedMemoryAnalysis(changed=False, games_with_user_state=[])
     evidence = user_evidence_context or session_context
-    if not any(
-        line.lstrip().startswith("User:")
-        for line in evidence.splitlines()
-    ):
+    if not extract_user_evidence(evidence):
         return AppliedMemoryAnalysis(changed=False, games_with_user_state=[])
 
     memory_file = await memory.store.read(
@@ -187,7 +185,7 @@ async def _apply_long_term_memory(
     )
 
     result = await analyzer.run(prompt)
-    analysis = sanitize_global_memory_scope(result.output)
+    analysis = result.output
     games_with_user_state = [
         name.strip()
         for name in analysis.games_with_user_state
@@ -199,7 +197,7 @@ async def _apply_long_term_memory(
             games_with_user_state=games_with_user_state,
         )
 
-    updated_memory = analysis.memory_markdown.strip()
+    updated_memory = render_global_memory(analysis.global_facts)
     if not updated_memory:
         raise ValueError("Memory analyzer returned an empty changed memory.")
     if updated_memory == current_memory.strip():
@@ -231,15 +229,25 @@ def _deserialize_context_snapshot(snapshot: str) -> str:
     return format_messages(messages)
 
 
+def _load_raw_conversation_messages(
+    conn: sqlite3.Connection,
+    conversation_id: int,
+) -> list[ModelMessage]:
+    """Load the original structured messages for one conversation."""
+    messages = []
+    for raw_message_list in get_messages(conn, conversation_id):
+        messages.extend(ModelMessagesTypeAdapter.validate_json(raw_message_list))
+    return messages
+
+
 def _load_raw_conversation_context(
     conn: sqlite3.Connection,
     conversation_id: int,
 ) -> str:
-    """Build analyzer input from raw messages when no final snapshot exists."""
-    messages = []
-    for raw_message_list in get_messages(conn, conversation_id):
-        messages.extend(ModelMessagesTypeAdapter.validate_json(raw_message_list))
-    return format_messages(messages)
+    """Build display/session input from the original structured messages."""
+    return format_messages(
+        _load_raw_conversation_messages(conn, conversation_id)
+    )
 
 
 async def process_pending_memories(
@@ -278,12 +286,16 @@ async def process_pending_memories(
                     video_observations=video_observations,
                 )
 
-            raw_context = _load_raw_conversation_context(conn, conversation_id)
+            raw_messages = _load_raw_conversation_messages(conn, conversation_id)
+            raw_context = format_messages(raw_messages)
+            user_evidence = format_user_evidence(raw_messages)
             applied = await _apply_long_term_memory(
                 analyzer,
                 memory,
                 session_context,
-                user_evidence_context=raw_context or session_context,
+                user_evidence_context=(
+                    user_evidence or extract_user_evidence(session_context)
+                ),
             )
             if session_document is not None and applied.games_with_user_state:
                 game_documents = await link_session_to_games(
@@ -298,7 +310,9 @@ async def process_pending_memories(
                         game_analyzer,
                         memory,
                         game_documents=game_documents,
-                        user_evidence_context=raw_context or session_context,
+                        user_evidence_context=(
+                            user_evidence or extract_user_evidence(session_context)
+                        ),
                         video_evidence_context=video_observations,
                     )
             mark_memory_analyzed(conn, conversation_id)

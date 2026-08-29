@@ -12,6 +12,7 @@ from buddy.memory.index import (
     MemoryDocument,
     MemoryDocumentType,
     MemoryRelationType,
+    get_memory_document,
     index_memory_document,
     link_memory_documents,
 )
@@ -39,6 +40,19 @@ def game_memory_path(name: str) -> str:
     return f"{STORAGE.game_memory_prefix}/{slug}.md"
 
 
+def resolve_game_memory_path(conn: sqlite3.Connection, name: str) -> str:
+    """Resolve a stable path without merging distinct titles on slug collision."""
+    title = normalize_game_name(name)
+    base_path = game_memory_path(title)
+    existing = get_memory_document(conn, base_path)
+    if existing is None or existing.title.casefold() == title.casefold():
+        return base_path
+
+    digest = sha256(title.casefold().encode()).hexdigest()[:12]
+    stem = base_path.removesuffix(".md")
+    return f"{stem}-{digest}.md"
+
+
 async def ensure_game_document(
     conn: sqlite3.Connection,
     memory: Memory,
@@ -46,7 +60,7 @@ async def ensure_game_document(
 ) -> MemoryDocument:
     """Create a minimal game profile once and ensure it remains indexed."""
     title = normalize_game_name(name)
-    path = game_memory_path(title)
+    path = resolve_game_memory_path(conn, title)
     memory_file = await memory.store.read(path, max_chars=MEMORY.game_document_chars)
     if memory_file is None:
         content = f"# {title}\n"
@@ -75,11 +89,10 @@ async def link_session_to_games(
     linked_games: list[MemoryDocument] = []
     seen_paths: set[str] = set()
     for name in game_names:
-        path = game_memory_path(name)
-        if path in seen_paths:
-            continue
-        seen_paths.add(path)
         game_document = await ensure_game_document(conn, memory, name)
+        if game_document.path in seen_paths:
+            continue
+        seen_paths.add(game_document.path)
         link_memory_documents(
             conn,
             source_document_id=session_document.id,

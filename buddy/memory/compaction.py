@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
+import re
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -48,6 +50,9 @@ if TYPE_CHECKING:
 _SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
 _MEMORY_METADATA_PREFIX = 'pydantic-ai-harness.memory.v1:'
 _VIDEO_CONTEXT_PREFIX = VIDEO_CONTEXT_MARKER
+_FORMATTED_ROLE_PREFIX = re.compile(
+    r'^(?:User|Assistant|System|Tool(?: Call)? \[[^]]+\]):'
+)
 
 
 def _stringify_tool_value(value: Any) -> str:
@@ -82,6 +87,54 @@ def format_messages(messages: Sequence[ModelMessage]) -> str:
                     args = _stringify_tool_value(part.args)
                     lines.append(f'Tool Call [{part.tool_name}]: {args}')
     return '\n'.join(lines)
+
+
+def format_user_evidence(messages: Sequence[ModelMessage]) -> str:
+    """Render complete user prompts as one JSON literal per message."""
+    statements: list[str] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if not isinstance(part, UserPromptPart):
+                continue
+            text = _user_prompt_text(part).strip()
+            if text:
+                statements.append(
+                    f"User: {json.dumps(text, ensure_ascii=False)}"
+                )
+    return "\n".join(statements)
+
+
+def extract_user_evidence(formatted_messages: str) -> str:
+    """Recover complete user blocks from a formatted legacy snapshot."""
+    statements: list[str] = []
+    current: list[str] | None = None
+    for line in formatted_messages.splitlines():
+        if line.startswith("User:"):
+            if current:
+                statements.append("\n".join(current).strip())
+            current = [line.removeprefix("User:").lstrip()]
+        elif _FORMATTED_ROLE_PREFIX.match(line):
+            if current:
+                statements.append("\n".join(current).strip())
+            current = None
+        elif current is not None:
+            current.append(line)
+    if current:
+        statements.append("\n".join(current).strip())
+    normalized: list[str] = []
+    for statement in statements:
+        try:
+            decoded = json.loads(statement)
+        except (json.JSONDecodeError, TypeError):
+            decoded = statement
+        normalized.append(decoded if isinstance(decoded, str) else statement)
+    return "\n".join(
+        f"User: {json.dumps(statement, ensure_ascii=False)}"
+        for statement in normalized
+        if statement
+    )
 
 
 def _user_prompt_text(part: UserPromptPart) -> str:

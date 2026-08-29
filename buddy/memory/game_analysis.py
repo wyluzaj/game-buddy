@@ -16,6 +16,7 @@ from buddy.memory.index import (
     MemoryDocumentType,
     index_memory_document,
 )
+from buddy.memory.compaction import extract_user_evidence
 from buddy.prompts import (
     GAME_MEMORY_ANALYSIS_PROMPT,
     GAME_MEMORY_ANALYZER_INSTRUCTIONS,
@@ -167,11 +168,7 @@ def _build_game_memory_prompt(
         )
         for path, profile in profiles.items()
     )
-    user_statements = "\n".join(
-        line
-        for line in user_evidence_context.splitlines()
-        if line.lstrip().startswith("User:")
-    )
+    user_statements = extract_user_evidence(user_evidence_context)
     return GAME_MEMORY_ANALYSIS_PROMPT.format(
         current_game_profiles=current_profiles,
         user_statements=user_statements,

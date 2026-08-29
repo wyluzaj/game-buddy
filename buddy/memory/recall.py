@@ -18,7 +18,7 @@ from buddy.memory.context_butler import (
     build_memory_context_prompt,
     validate_butler_sources,
 )
-from buddy.memory.game import game_memory_path
+from buddy.memory.game import resolve_game_memory_path
 from buddy.memory.index import (
     MemoryDocument,
     MemoryDocumentType,
@@ -171,7 +171,10 @@ class MemoryRecallService:
         game: str,
     ) -> tuple[MemoryDocument | None, str | None]:
         """Resolve an exact stable path, then a unique indexed title match."""
-        exact = get_memory_document(self._conn, game_memory_path(game))
+        exact = get_memory_document(
+            self._conn,
+            resolve_game_memory_path(self._conn, game),
+        )
         if exact is not None and exact.document_type is MemoryDocumentType.GAME:
             return exact, None
 

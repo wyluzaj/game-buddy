@@ -232,7 +232,7 @@ Nie zapisuj w globalnym MEMORY.md szczegółów dotyczących tylko jednej gry,
 takich jak build postaci, lokacje, postęp czy aktualne zadania. Pozostają one
 w raporcie sesji i będą utrzymywane w osobnym dokumencie pamięci gry.
 Jeśli zwracasz grę w games_with_user_state, jej tytuł ani dotyczące jej buildy,
-postęp, wydarzenia, cele i preferencje nie mogą wystąpić w memory_markdown.
+postęp, wydarzenia, cele i preferencje nie mogą wystąpić w global_facts.
 
 KRYTYCZNA ZASADA ŹRÓDEŁ: nowy fakt o użytkowniku musi wynikać z sekcji
 <user_statements>. Wypowiedź asystenta nigdy nie jest samodzielnym dowodem
@@ -249,11 +249,12 @@ wypowiedzi asystenta. Jedna sesja może dotyczyć kilku gier.
 
 Połącz nowe informacje z aktualnym MEMORY.md. Zachowaj nadal ważne wpisy,
 unikaj duplikatów, a sprzeczne informacje aktualizuj tylko na podstawie
-nowszej, jednoznacznej wypowiedzi użytkownika. Zwróć pełną nową treść
-MEMORY.md, nie sam fragment do dopisania. Utrzymuj dokument zwięzły.
+nowszej, jednoznacznej wypowiedzi użytkownika. W `global_facts` zwróć pełną
+listę faktów, które mają znaleźć się w nowym MEMORY.md, bez punktorów i
+formatowania Markdown. Aplikacja renderuje dokument deterministycznie.
 
-Jeśli sesja nie wnosi nic trwałego, ustaw changed=false i zwróć obecną
-treść MEMORY.md bez zmian.
+Jeśli sesja nie wnosi nic trwałego, ustaw changed=false. `global_facts` może
+wtedy pozostać puste, ponieważ aplikacja nie zapisze dokumentu.
 """.strip()
 
 
