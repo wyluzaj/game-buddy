@@ -2,11 +2,8 @@
 
 import sqlite3
 
-from buddy.video_storage import get_video_context_updates_for_conversation
-
-
-MAX_SESSION_VIDEO_OBSERVATIONS = 50
-MAX_SESSION_VIDEO_OBSERVATIONS_CHARS = 30_000
+from buddy.config import VIDEO
+from buddy.video.storage import get_video_context_updates_for_conversation
 
 
 def build_session_video_observations(
@@ -17,7 +14,7 @@ def build_session_video_observations(
     updates = get_video_context_updates_for_conversation(
         conn,
         conversation_id=conversation_id,
-    )[-MAX_SESSION_VIDEO_OBSERVATIONS:]
+    )[-VIDEO.session_observations:]
     blocks: list[str] = []
     for update in updates:
         sources = ", ".join(update.sources)
@@ -31,7 +28,7 @@ def build_session_video_observations(
         separator_chars = 1 if selected else 0
         if (
             selected_chars + separator_chars + len(block)
-            > MAX_SESSION_VIDEO_OBSERVATIONS_CHARS
+            > VIDEO.session_observation_chars
         ):
             break
         selected.append(block)

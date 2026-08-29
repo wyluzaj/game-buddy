@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from buddy.video_models import VideoDetailAnalysis, VideoOverview
+from buddy.video.models import VideoDetailAnalysis, VideoOverview
 
 
 class VideoAnalysisError(RuntimeError):

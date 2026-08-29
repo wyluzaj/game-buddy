@@ -1,41 +1,65 @@
 """Consolidate completed sessions into long-term Harness Memory."""
 
-from dataclasses import dataclass, field
 import sqlite3
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Annotated, Protocol
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai_harness.memory import Memory
 
-from buddy.config import LONG_TERM_MEMORY_MODEL, build_model
+from buddy.config import MEMORY, MODELS, build_model
 from buddy.database import (
     get_conversations_pending_memory,
     get_messages,
     mark_memory_analyzed,
 )
-from buddy.long_term_memory import MEMORY_STORE_PATH
+from buddy.memory.compaction import (
+    extract_user_evidence,
+    format_messages,
+    format_user_evidence,
+)
+from buddy.memory.game import link_session_to_games
+from buddy.memory.game_analysis import GameMemoryAnalyzer, update_game_profiles
+from buddy.memory.index import get_memory_document
+from buddy.memory.journal import (
+    MemoryProcessingStage,
+    checkpoint_memory_job,
+    delete_memory_job,
+    get_or_create_memory_job,
+    record_memory_job_failure,
+)
+from buddy.memory.long_term import MEMORY_STORE_PATH
+from buddy.memory.session import (
+    parse_database_timestamp,
+    persist_session_document,
+    session_memory_path,
+)
 from buddy.prompts import (
     LONG_TERM_MEMORY_ANALYSIS_PROMPT,
     LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
 )
-from buddy.game_memory import link_session_to_games
-from buddy.game_memory_analysis import GameMemoryAnalyzer, update_game_profiles
-from buddy.session_memory import (
-    parse_database_timestamp,
-    persist_session_document,
-)
-from buddy.timed_compaction import format_messages
-from buddy.video_session_memory import build_session_video_observations
+from buddy.video.session_memory import build_session_video_observations
+
+GlobalMemoryFact = Annotated[
+    str,
+    Field(min_length=1, max_length=MEMORY.global_fact_chars),
+]
 
 
 class MemoryAnalysisResult(BaseModel):
     """Structured decision returned by the long-term-memory curator."""
 
     changed: bool
-    memory_markdown: str
+    global_facts: list[GlobalMemoryFact] = Field(
+        default_factory=list,
+        max_length=MEMORY.global_facts,
+        description=(
+            "Complete replacement list of durable, game-independent user facts."
+        ),
+    )
     games_with_user_state: list[str] = Field(
         default_factory=list,
         max_length=8,
@@ -83,43 +107,32 @@ def build_memory_analyzer(
     model: str | PydanticModel | None = None,
 ) -> Agent[None, MemoryAnalysisResult]:
     """Build the dedicated agent that curates completed session memory."""
-    analyzer_model = model if model is not None else build_model(LONG_TERM_MEMORY_MODEL)
+    analyzer_model = model if model is not None else build_model(MODELS.long_term_memory)
     analyzer = Agent[None, MemoryAnalysisResult](
         model=analyzer_model,
         deps_type=type(None),
         instructions=LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
         output_type=MemoryAnalysisResult,
     )
-    analyzer.output_validator(sanitize_global_memory_scope)
     return analyzer
 
 
-def sanitize_global_memory_scope(
-    analysis: MemoryAnalysisResult,
-) -> MemoryAnalysisResult:
-    """Remove model-proposed global-memory lines tied to detected games."""
-    game_names = [
-        game.strip().casefold()
-        for game in analysis.games_with_user_state
-        if game.strip()
-    ]
-    if not game_names:
-        return analysis
-
-    kept_lines = [
-        line
-        for line in analysis.memory_markdown.splitlines()
-        if not any(game_name in line.casefold() for game_name in game_names)
-    ]
-    cleaned_memory = "\n".join(kept_lines).strip()
-    if cleaned_memory == analysis.memory_markdown.strip():
-        return analysis
-    return analysis.model_copy(
-        update={
-            "changed": analysis.changed and bool(cleaned_memory),
-            "memory_markdown": cleaned_memory,
-        }
-    )
+def render_global_memory(facts: list[str]) -> str:
+    """Render validated facts into the only supported MEMORY.md shape."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for fact in facts:
+        clean = " ".join(fact.removeprefix("- ").split()).strip()
+        if not clean:
+            continue
+        key = clean.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(clean)
+    if not normalized:
+        return ""
+    return "# User Memory\n\n" + "\n".join(f"- {fact}" for fact in normalized)
 
 
 def build_memory_analysis_prompt(
@@ -131,11 +144,7 @@ def build_memory_analysis_prompt(
     """Build a clearly delimited prompt for memory consolidation."""
     current = current_memory or "(MEMORY.md jest obecnie puste)"
     evidence = user_evidence_context or session_context
-    user_statements = "\n".join(
-        line
-        for line in evidence.splitlines()
-        if line.lstrip().startswith("User:")
-    )
+    user_statements = extract_user_evidence(evidence)
     return LONG_TERM_MEMORY_ANALYSIS_PROMPT.format(
         current_memory=current,
         user_statements=user_statements,
@@ -169,13 +178,13 @@ async def _apply_long_term_memory(
     if not session_context:
         return AppliedMemoryAnalysis(changed=False, games_with_user_state=[])
     evidence = user_evidence_context or session_context
-    if not any(
-        line.lstrip().startswith("User:")
-        for line in evidence.splitlines()
-    ):
+    if not extract_user_evidence(evidence):
         return AppliedMemoryAnalysis(changed=False, games_with_user_state=[])
 
-    memory_file = await memory.store.read(MEMORY_STORE_PATH, max_chars=100_000)
+    memory_file = await memory.store.read(
+        MEMORY_STORE_PATH,
+        max_chars=MEMORY.global_document_chars,
+    )
     current_memory = memory_file.content if memory_file is not None else ""
     prompt = build_memory_analysis_prompt(
         current_memory,
@@ -184,7 +193,7 @@ async def _apply_long_term_memory(
     )
 
     result = await analyzer.run(prompt)
-    analysis = sanitize_global_memory_scope(result.output)
+    analysis = result.output
     games_with_user_state = [
         name.strip()
         for name in analysis.games_with_user_state
@@ -196,7 +205,7 @@ async def _apply_long_term_memory(
             games_with_user_state=games_with_user_state,
         )
 
-    updated_memory = analysis.memory_markdown.strip()
+    updated_memory = render_global_memory(analysis.global_facts)
     if not updated_memory:
         raise ValueError("Memory analyzer returned an empty changed memory.")
     if updated_memory == current_memory.strip():
@@ -228,15 +237,25 @@ def _deserialize_context_snapshot(snapshot: str) -> str:
     return format_messages(messages)
 
 
+def _load_raw_conversation_messages(
+    conn: sqlite3.Connection,
+    conversation_id: int,
+) -> list[ModelMessage]:
+    """Load the original structured messages for one conversation."""
+    messages = []
+    for raw_message_list in get_messages(conn, conversation_id):
+        messages.extend(ModelMessagesTypeAdapter.validate_json(raw_message_list))
+    return messages
+
+
 def _load_raw_conversation_context(
     conn: sqlite3.Connection,
     conversation_id: int,
 ) -> str:
-    """Build analyzer input from raw messages when no final snapshot exists."""
-    messages = []
-    for raw_message_list in get_messages(conn, conversation_id):
-        messages.extend(ModelMessagesTypeAdapter.validate_json(raw_message_list))
-    return format_messages(messages)
+    """Build display/session input from the original structured messages."""
+    return format_messages(
+        _load_raw_conversation_messages(conn, conversation_id)
+    )
 
 
 async def process_pending_memories(
@@ -249,7 +268,10 @@ async def process_pending_memories(
     report = MemoryProcessingReport()
     for row in get_conversations_pending_memory(conn):
         conversation_id = row["id"]
+        job_created = False
         try:
+            job = get_or_create_memory_job(conn, conversation_id)
+            job_created = True
             snapshot = row["compacted_history"] or ""
             session_context = _deserialize_context_snapshot(snapshot)
             if not session_context:
@@ -265,24 +287,73 @@ async def process_pending_memories(
 
             session_document = None
             if session_context:
-                session_document = await persist_session_document(
+                if job.stage < MemoryProcessingStage.SESSION_PERSISTED:
+                    session_document = await persist_session_document(
+                        conn,
+                        memory,
+                        conversation_id=conversation_id,
+                        started_at=parse_database_timestamp(row["created_at"]),
+                        ended_at=parse_database_timestamp(row["ended_at"]),
+                        session_context=session_context,
+                        video_observations=video_observations,
+                    )
+                else:
+                    session_document = get_memory_document(
+                        conn,
+                        session_memory_path(conversation_id),
+                    )
+                    if session_document is None:
+                        raise RuntimeError(
+                            "Memory journal references a missing session document."
+                        )
+            if job.stage < MemoryProcessingStage.SESSION_PERSISTED:
+                job = checkpoint_memory_job(
                     conn,
-                    memory,
-                    conversation_id=conversation_id,
-                    started_at=parse_database_timestamp(row["created_at"]),
-                    ended_at=parse_database_timestamp(row["ended_at"]),
-                    session_context=session_context,
-                    video_observations=video_observations,
+                    conversation_id,
+                    MemoryProcessingStage.SESSION_PERSISTED,
                 )
 
-            raw_context = _load_raw_conversation_context(conn, conversation_id)
-            applied = await _apply_long_term_memory(
-                analyzer,
-                memory,
-                session_context,
-                user_evidence_context=raw_context or session_context,
-            )
-            if session_document is not None and applied.games_with_user_state:
+            raw_messages = _load_raw_conversation_messages(conn, conversation_id)
+            user_evidence = format_user_evidence(raw_messages)
+            if job.stage >= MemoryProcessingStage.GLOBAL_APPLIED:
+                if job.analysis is None:
+                    raise RuntimeError(
+                        "Memory journal is missing its analyzer result."
+                    )
+                game_names = job.analysis.get("games_with_user_state", [])
+                if not isinstance(game_names, list):
+                    raise RuntimeError(
+                        "Memory journal contains invalid game analysis data."
+                    )
+                applied = AppliedMemoryAnalysis(
+                    changed=bool(job.analysis.get("changed")),
+                    games_with_user_state=[
+                        str(name) for name in game_names
+                    ],
+                )
+            else:
+                applied = await _apply_long_term_memory(
+                    analyzer,
+                    memory,
+                    session_context,
+                    user_evidence_context=(
+                        user_evidence or extract_user_evidence(session_context)
+                    ),
+                )
+                job = checkpoint_memory_job(
+                    conn,
+                    conversation_id,
+                    MemoryProcessingStage.GLOBAL_APPLIED,
+                    analysis={
+                        "changed": applied.changed,
+                        "games_with_user_state": applied.games_with_user_state,
+                    },
+                )
+            if (
+                job.stage < MemoryProcessingStage.GAME_PROFILES_APPLIED
+                and session_document is not None
+                and applied.games_with_user_state
+            ):
                 game_documents = await link_session_to_games(
                     conn,
                     memory,
@@ -295,19 +366,29 @@ async def process_pending_memories(
                         game_analyzer,
                         memory,
                         game_documents=game_documents,
-                        user_evidence_context=raw_context or session_context,
+                        user_evidence_context=(
+                            user_evidence or extract_user_evidence(session_context)
+                        ),
                         video_evidence_context=video_observations,
                     )
+            if job.stage < MemoryProcessingStage.GAME_PROFILES_APPLIED:
+                checkpoint_memory_job(
+                    conn,
+                    conversation_id,
+                    MemoryProcessingStage.GAME_PROFILES_APPLIED,
+                )
             mark_memory_analyzed(conn, conversation_id)
+            delete_memory_job(conn, conversation_id)
             report.processed += 1
             if applied.changed:
                 report.updated += 1
         # One broken session must stay pending without blocking later sessions.
         # noinspection PyBroadException
         except Exception as error:
+            reason = f"{type(error).__name__}: {error}"
+            if job_created:
+                record_memory_job_failure(conn, conversation_id, reason)
             report.failed_conversation_ids.append(conversation_id)
-            report.failure_reasons[conversation_id] = (
-                f"{type(error).__name__}: {error}"
-            )
+            report.failure_reasons[conversation_id] = reason
 
     return report

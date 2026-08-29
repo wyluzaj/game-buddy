@@ -2,14 +2,17 @@
 import sqlite3
 from pathlib import Path
 
-from buddy.memory_index import init_memory_index
-from buddy.video_storage import init_video_storage
+from buddy.config import STORAGE
+from buddy.memory.index import init_memory_index
+from buddy.memory.journal import init_memory_journal
+from buddy.video.storage import init_video_storage
 
 _CONVERSATION_COLUMNS: dict[str, str] = {
     "ended_at": "TIMESTAMP",
     "compacted_history": "TEXT",
     "memory_analyzed_at": "TIMESTAMP",
 }
+LATEST_SCHEMA_VERSION = 3
 
 
 def _open_connection(db_path: str) -> sqlite3.Connection:
@@ -22,7 +25,7 @@ def _open_connection(db_path: str) -> sqlite3.Connection:
     return conn
 
 
-def init_db(db_path: str = "data/chatbot.db") -> sqlite3.Connection:
+def init_db(db_path: str = STORAGE.chat_database_path) -> sqlite3.Connection:
     """Initialize the database and return a connection."""
     conn = _open_connection(db_path)
 
@@ -60,7 +63,9 @@ def init_db(db_path: str = "data/chatbot.db") -> sqlite3.Connection:
                  ''')
 
     init_memory_index(conn)
+    init_memory_journal(conn)
     init_video_storage(conn)
+    conn.execute(f"PRAGMA user_version = {LATEST_SCHEMA_VERSION}")
     conn.commit()
     return conn
 

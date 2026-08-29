@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from buddy.video_context_butler import VideoContextButlerResult
-from buddy.video_models import VideoOverview
-from buddy.video_pipeline import process_video_file
-from buddy.video_storage import (
+from buddy.video.context_butler import VideoContextButlerResult
+from buddy.video.models import VideoOverview
+from buddy.video.pipeline import process_video_file
+from buddy.video.storage import (
     get_video_context_update_for_report,
     get_video_reports,
 )

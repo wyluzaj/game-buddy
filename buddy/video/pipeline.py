@@ -1,20 +1,20 @@
 """End-to-end orchestration for overview analysis and compact video context."""
 
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-import sqlite3
 
 from pydantic_ai import RunUsage
 
-from buddy.video_analysis_service import (
+from buddy.video.analysis_service import (
     VideoAnalysisOutcome,
     register_and_analyze_video,
 )
-from buddy.video_analyzer import VideoAnalyzer
-from buddy.video_context_butler import VideoContextButler
-from buddy.video_context_service import process_video_report_context
-from buddy.video_models import VideoContextUpdate
+from buddy.video.analyzer import VideoAnalyzer
+from buddy.video.context_butler import VideoContextButler
+from buddy.video.context_service import process_video_report_context
+from buddy.video.models import VideoContextUpdate
 
 
 @dataclass(frozen=True, slots=True)

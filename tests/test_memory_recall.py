@@ -7,15 +7,15 @@ from pydantic_ai import RunUsage
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
-from buddy.config import CONTEXT_BUTLER_MODEL, MODEL_TIERS
-from buddy.context_butler import ContextButlerResult, build_context_butler
-from buddy.game_memory import ensure_game_document, link_session_to_games
-from buddy.memory_recall import (
+from buddy.config import MODEL_TIERS, MODELS
+from buddy.memory.context_butler import ContextButlerResult, build_context_butler
+from buddy.memory.game import ensure_game_document, link_session_to_games
+from buddy.memory.recall import (
     MemoryRecallCoordinator,
     MemoryRecallService,
     MemoryRecallType,
 )
-from buddy.session_memory import persist_session_document
+from buddy.memory.session import persist_session_document
 
 
 @dataclass
@@ -167,12 +167,12 @@ def test_context_butler_uses_explicit_configured_model(monkeypatch):
 
     assert isinstance(butler.model, FallbackModel)
     expected_models = [
-        CONTEXT_BUTLER_MODEL.value.split(":", 1)[1]
+        MODELS.memory_context_butler.value.split(":", 1)[1]
     ] + [
         model.value.split(":", 1)[1]
         for model, tier in MODEL_TIERS.items()
-        if tier == MODEL_TIERS[CONTEXT_BUTLER_MODEL]
-        and model is not CONTEXT_BUTLER_MODEL
+        if tier == MODEL_TIERS[MODELS.memory_context_butler]
+        and model is not MODELS.memory_context_butler
     ]
     assert [model.model_name for model in butler.model.models] == expected_models
 

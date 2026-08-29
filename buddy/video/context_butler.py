@@ -1,38 +1,33 @@
 """Delegate that maintains a bounded replacement snapshot of observed gameplay."""
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from typing import Protocol
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunUsage
 from pydantic_ai.models import Model as PydanticModel
 
-from buddy.config import VIDEO_CONTEXT_BUTLER_MODEL, build_model
+from buddy.config import MODELS, VIDEO, build_model
 from buddy.prompts import (
     VIDEO_CONTEXT_BUTLER_INSTRUCTIONS,
     VIDEO_CONTEXT_BUTLER_PROMPT,
 )
-from buddy.video_models import VideoContextUpdate, VideoOverview, VideoSegment
-
-
-MAX_VIDEO_CONTEXT_CHARS = 1_000
-MAX_VIDEO_CONTEXT_SOURCES = 5
-MAX_VIDEO_CONTEXT_UNCERTAINTY_CHARS = 400
+from buddy.video.models import VideoContextUpdate, VideoOverview, VideoSegment
 
 
 class VideoContextButlerResult(BaseModel):
     """Small replacement state proposed from the newest overview."""
 
     changed: bool
-    context: str = Field(default="", max_length=MAX_VIDEO_CONTEXT_CHARS)
+    context: str = Field(default="", max_length=VIDEO.context_chars)
     sources: list[str] = Field(
         default_factory=list,
-        max_length=MAX_VIDEO_CONTEXT_SOURCES,
+        max_length=VIDEO.context_sources,
     )
     uncertainty: str | None = Field(
         default=None,
-        max_length=MAX_VIDEO_CONTEXT_UNCERTAINTY_CHARS,
+        max_length=VIDEO.context_uncertainty_chars,
     )
 
 
@@ -63,7 +58,7 @@ def build_video_context_butler(
 ) -> Agent[None, VideoContextButlerResult]:
     """Build a tool-less delegate using its explicit configured model."""
     butler_model = (
-        model if model is not None else build_model(VIDEO_CONTEXT_BUTLER_MODEL)
+        model if model is not None else build_model(MODELS.video_context_butler)
     )
     return Agent[None, VideoContextButlerResult](
         model=butler_model,

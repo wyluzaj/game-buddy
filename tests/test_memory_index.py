@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from buddy.database import create_conversation
-from buddy.memory_index import (
+from buddy.memory.index import (
     MemoryDocumentType,
     MemoryRelationType,
     delete_memory_document,

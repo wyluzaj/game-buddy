@@ -5,13 +5,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
 from buddy.agent import build_agent
-from buddy.config import MODEL_TIERS, SHORT_TERM_MEMORY_MODEL
-from buddy.long_term_memory import (
-    InjectionOnlyMemory,
+from buddy.config import MODEL_TIERS, MODELS
+from buddy.memory.compaction import SummarizingCompactionTimed
+from buddy.memory.long_term import (
     MEMORY_STORE_PATH,
+    InjectionOnlyMemory,
     create_long_term_memory,
 )
-from buddy.timed_compaction import SummarizingCompactionTimed
 
 
 def test_long_term_memory_persists_between_store_instances(tmp_path):
@@ -69,10 +69,10 @@ def test_agent_uses_configured_short_term_memory_fallback(monkeypatch):
     assert isinstance(short_term_memory.model, FallbackModel)
     used_names = [model.model_name for model in short_term_memory.model.models]
     assert used_names == [
-        SHORT_TERM_MEMORY_MODEL.value.split(":", 1)[1]
+        MODELS.short_term_memory.value.split(":", 1)[1]
     ] + [
         model.value.split(":", 1)[1]
         for model, tier in MODEL_TIERS.items()
-        if tier == MODEL_TIERS[SHORT_TERM_MEMORY_MODEL]
-        and model is not SHORT_TERM_MEMORY_MODEL
+        if tier == MODEL_TIERS[MODELS.short_term_memory]
+        and model is not MODELS.short_term_memory
     ]

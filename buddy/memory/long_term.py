@@ -4,19 +4,10 @@ from pathlib import Path
 
 from pydantic_ai_harness.memory import Memory, SqliteMemoryStore
 
-from buddy.config import MEMORY_DATABASE_PATH
+from buddy.config import STORAGE
+from buddy.prompts import LONG_TERM_MEMORY_GUIDANCE
 
-
-LONG_TERM_MEMORY_GUIDANCE = """
-Ta pamięć jest trwała i jest dostępna pomiędzy różnymi sesjami rozmowy.
-Zapisuj w niej tylko informacje przydatne w przyszłych rozmowach: trwałe
-preferencje użytkownika, długoterminowe cele, ważne decyzje i istotny kontekst.
-Nie zapisuj sekretów ani chwilowych szczegółów bez znaczenia. Utrzymuj
-MEMORY.md zwięzłe, aktualizuj istniejące informacje i unikaj duplikatów.
-""".strip()
-
-MEMORY_AGENT_NAME = "main"
-MEMORY_STORE_PATH = f"{MEMORY_AGENT_NAME}/MEMORY.md"
+MEMORY_STORE_PATH = f"{STORAGE.memory_agent_name}/MEMORY.md"
 
 
 class InjectionOnlyMemory(Memory):
@@ -32,7 +23,7 @@ class InjectionOnlyMemory(Memory):
 
 
 def create_long_term_memory(
-    database_path: str | Path = MEMORY_DATABASE_PATH,
+    database_path: str | Path = STORAGE.memory_database_path,
 ) -> Memory:
     """Create long-term Harness Memory persisted in a SQLite database."""
     database_path = Path(database_path)
@@ -40,6 +31,6 @@ def create_long_term_memory(
     store = SqliteMemoryStore(database=database_path)
     return InjectionOnlyMemory(
         store=store,
-        agent_name=MEMORY_AGENT_NAME,
+        agent_name=STORAGE.memory_agent_name,
         guidance=LONG_TERM_MEMORY_GUIDANCE,
     )

@@ -5,18 +5,19 @@ from pathlib import Path
 import pytest
 
 from buddy.database import create_conversation
-from buddy.video_detail_service import (
+from buddy.video.detail_service import (
     VideoDetailStateError,
     analyze_video_detail_source,
     parse_video_source,
 )
-from buddy.video_models import (
+from buddy.video.models import (
     VideoDetailAnalysis,
     VideoDetailObservation,
     VideoOverview,
     VideoReportMode,
 )
-from buddy.video_storage import (
+from buddy.video.storage import (
+    claim_video_segment_for_analysis,
     create_video_segment,
     get_video_reports,
     save_video_report,
@@ -55,6 +56,7 @@ def _completed_segment(db, tmp_path):
         ended_at=started_at + timedelta(seconds=30),
         conversation_id=conversation_id,
     )
+    assert claim_video_segment_for_analysis(db, segment.id) is not None
     save_video_report(
         db,
         segment_id=segment.id,
@@ -156,3 +158,48 @@ def test_detail_evidence_cannot_escape_requested_range(db, tmp_path):
         segment.id,
         mode=VideoReportMode.DETAIL,
     ) == []
+
+
+def test_concurrent_identical_detail_requests_call_provider_once(db, tmp_path):
+    segment = _completed_segment(db, tmp_path)
+    analyzer = StubDetailAnalyzer(
+        [
+            VideoDetailAnalysis(
+                answer="Na ścianie był czerwony symbol.",
+                observations=[
+                    VideoDetailObservation(
+                        start_seconds=10,
+                        end_seconds=11,
+                        description="Czerwony symbol.",
+                    )
+                ],
+            )
+        ]
+    )
+
+    async def scenario():
+        return await asyncio.gather(
+            analyze_video_detail_source(
+                db,
+                analyzer,
+                source_uri=f"{segment.source_uri}?t=10-20",
+                question="Co było na ścianie?",
+            ),
+            analyze_video_detail_source(
+                db,
+                analyzer,
+                source_uri=f"{segment.source_uri}?t=10-20",
+                question="Co było na ścianie?",
+            ),
+        )
+
+    first, second = asyncio.run(scenario())
+
+    assert len(analyzer.calls) == 1
+    assert first.reused_existing_report is False
+    assert second.reused_existing_report is True
+    assert first.answer == second.answer
+    detail_count = db.execute(
+        "SELECT COUNT(*) FROM video_reports WHERE mode = 'detail'"
+    ).fetchone()[0]
+    assert detail_count == 1

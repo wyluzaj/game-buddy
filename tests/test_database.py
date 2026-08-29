@@ -1,6 +1,8 @@
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from buddy.database import (
+    LATEST_SCHEMA_VERSION,
     create_conversation,
     finish_conversation,
     get_conversations_pending_memory,
@@ -9,6 +11,7 @@ from buddy.database import (
     mark_memory_analyzed,
     save_messages,
 )
+from buddy.video.storage import create_video_segment
 
 
 def test_get_messages_returns_them_in_insertion_order(db):
@@ -123,3 +126,89 @@ def test_init_db_migrates_existing_conversations_table(tmp_path):
         "video_reports",
         "video_context_updates",
     }
+
+
+def test_init_db_versions_and_migrates_legacy_video_schema(tmp_path):
+    database_path = tmp_path / "legacy-video.db"
+    legacy = sqlite3.connect(database_path)
+    legacy.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE video_segments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER,
+            file_path TEXT NOT NULL UNIQUE,
+            started_at TEXT NOT NULL,
+            ended_at TEXT NOT NULL,
+            duration_seconds REAL NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE video_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            segment_id INTEGER NOT NULL,
+            mode TEXT NOT NULL,
+            question TEXT,
+            provider TEXT NOT NULL,
+            model_name TEXT NOT NULL,
+            report_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE video_context_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER NOT NULL UNIQUE,
+            changed INTEGER NOT NULL,
+            context TEXT NOT NULL DEFAULT '',
+            sources_json TEXT NOT NULL DEFAULT '[]',
+            uncertainty TEXT,
+            created_at TEXT NOT NULL,
+            injected_at TEXT
+        );
+        INSERT INTO video_segments (
+            id, file_path, started_at, ended_at, duration_seconds,
+            status, created_at, updated_at
+        ) VALUES (
+            1, 'same.mp4', '2026-08-29T18:00:00+00:00',
+            '2026-08-29T18:02:00+00:00', 120, 'pending',
+            '2026-08-29T18:02:00+00:00', '2026-08-29T18:02:00+00:00'
+        );
+        """
+    )
+    legacy.commit()
+    legacy.close()
+
+    migrated = init_db(str(database_path))
+    segment_columns = {
+        row["name"]
+        for row in migrated.execute("PRAGMA table_info(video_segments)")
+    }
+    report_columns = {
+        row["name"]
+        for row in migrated.execute("PRAGMA table_info(video_reports)")
+    }
+    legacy_row = migrated.execute(
+        "SELECT recording_key FROM video_segments WHERE id = 1"
+    ).fetchone()
+    started_at = datetime(2026, 8, 29, 19, 0, tzinfo=timezone.utc)
+    second = create_video_segment(
+        migrated,
+        file_path="same.mp4",
+        started_at=started_at,
+        ended_at=started_at + timedelta(minutes=2),
+    )
+    schema_version = migrated.execute("PRAGMA user_version").fetchone()[0]
+    foreign_key_errors = migrated.execute("PRAGMA foreign_key_check").fetchall()
+    migrated.close()
+
+    assert "recording_key" in segment_columns
+    assert "request_key" in report_columns
+    assert legacy_row["recording_key"] == "legacy:1"
+    assert second.id != 1
+    assert schema_version == LATEST_SCHEMA_VERSION
+    assert foreign_key_errors == []

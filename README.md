@@ -104,7 +104,7 @@ python -c "import sqlite3; c=sqlite3.connect('data/chatbot.db'); print(c.execute
 Analyze a completed recording and associate it with that conversation:
 
 ```powershell
-python -m buddy.video_cli "C:\path\to\recording.mp4" --duration-seconds 120 --conversation-id 1
+python -m buddy.video.cli "C:\path\to\recording.mp4" --duration-seconds 120 --conversation-id 1
 ```
 
 The next user turn receives the compact observed-game state. If the user asks for a detail
@@ -138,10 +138,15 @@ separate API key.
 
 ## Setup
 
+Python 3.10 through 3.14 is supported and tested in CI on 3.10 and 3.14. The project is
+developed on Windows; the Python application and tests also run on Linux in CI. Video file
+paths and the activation command are the only platform-specific parts of the documented
+workflow.
+
 1. Clone the repository and enter the directory:
 
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/wyluzaj/game-buddy.git
    cd game-buddy
    ```
 
@@ -165,6 +170,12 @@ separate API key.
    python -m pip install -e ".[dev]"
    ```
 
+   For the exact dependency set verified in this branch, apply the lock file:
+
+   ```bash
+   python -m pip install -c requirements-lock.txt -e ".[dev]"
+   ```
+
 4. Copy the environment template and add provider keys:
 
    ```powershell
@@ -185,6 +196,13 @@ separate API key.
    `GOOGLE_API_KEY` is required by the default chat model and by the configured short- and
    long-term memory models. `OPENROUTER_API_KEY` is required when an OpenRouter model or
    fallback is used.
+
+   | Variable | Required | Meaning |
+   | --- | --- | --- |
+   | `GOOGLE_API_KEY` | Yes for default models and video | Gemini text and uploaded-video analysis |
+   | `OPENROUTER_API_KEY` | Yes for default chat/fallbacks | OpenRouter chat models |
+   | `LOGFIRE_TOKEN` | No | Exports Pydantic AI traces to the configured Logfire project |
+   | `BUDDY_DEBUG` | No | Set to `true` to print tracebacks at terminal process boundaries |
 
 5. Run the application:
 
@@ -222,17 +240,20 @@ Important settings:
 
 | Setting | Default | Purpose |
 | --- | ---: | --- |
-| `HISTORY_MINUTES` | `30` | Time window preserved as raw short-term context |
-| `MIN_RECENT_MESSAGES` | `15` | Minimum number of recent messages kept unchanged |
-| `SHORT_TERM_MEMORY_MODEL` | Gemini 3.1 Flash Lite | Model generating timed summaries |
-| `LONG_TERM_MEMORY_MODEL` | Gemini 3.1 Flash Lite | Model curating durable memory |
-| `CONTEXT_BUTLER_MODEL` | Gemini 3.1 Flash Lite | Model reducing recalled documents |
-| `VIDEO_OVERVIEW_MODEL` | Gemini 3.1 Flash Lite | Native fast clip analysis |
-| `VIDEO_DETAIL_MODEL` | Gemini 3.1 Flash Lite | Native question-specific clip analysis |
-| `VIDEO_CONTEXT_BUTLER_MODEL` | Gemini 3.1 Flash Lite | Model maintaining bounded current gameplay state |
-| `MEMORY_DATABASE_PATH` | `data/memory.db` | Harness Memory SQLite store |
+| `AGENT.history_minutes` | `30` | Time window preserved as raw short-term context |
+| `AGENT.min_recent_messages` | `15` | Minimum number of recent messages kept unchanged |
+| `MODELS.short_term_memory` | Gemini 3.1 Flash Lite | Model generating timed summaries |
+| `MODELS.long_term_memory` | Gemini 3.1 Flash Lite | Model curating durable and game memory |
+| `MODELS.memory_context_butler` | Gemini 3.1 Flash Lite | Model reducing recalled documents |
+| `MODELS.video_overview` | Gemini 3.1 Flash Lite | Native fast clip analysis |
+| `MODELS.video_detail` | Gemini 3.1 Flash Lite | Native question-specific clip analysis |
+| `MODELS.video_context_butler` | Gemini 3.1 Flash Lite | Model maintaining current gameplay state |
+| `STORAGE.memory_database_path` | `data/memory.db` | Harness Memory SQLite store |
 
-Prompts and model instructions are centralized in `buddy/prompts.py`.
+All code-level settings are immutable dataclass sections in `buddy/config.py`: `MODELS`,
+`AGENT`, `RUNTIME`, `STORAGE`, `MEMORY`, and `VIDEO`. Provider credentials and runtime-only
+diagnostics stay in environment variables. Prompts, instructions, and injection markers are
+centralized in `buddy/prompts.py`.
 
 ## Optional Logfire tracing
 
@@ -260,6 +281,21 @@ or provide `LOGFIRE_TOKEN` as an environment variable. Local `.logfire` credenti
 `MEMORY.md` is a logical Harness memory path stored in SQLite; it is not a standalone Markdown
 file in the repository.
 
+### Privacy, backup, and deletion
+
+- Conversations, memory documents, reports, and normalized recording paths are stored
+  locally in the two SQLite databases. Original video bytes remain in their source files.
+- Video overview and detail requests upload the selected clip to Google's Gemini service.
+  The application requests deletion of the provider-side temporary file after generation,
+  including failure paths, but provider retention is ultimately governed by Google's terms.
+- Logfire receives traces only when `LOGFIRE_TOKEN` or local Logfire credentials are present.
+  Do not enable it for sensitive sessions without reviewing the trace destination.
+- For a consistent backup, exit Buddy first and copy `data/chatbot.db`, `data/memory.db`, and
+  any recordings you need. Restore both databases as a pair because the chat database holds
+  indexes and processing checkpoints for documents in the memory database.
+- To delete all local application history, exit Buddy and remove both database files. This
+  cannot delete copies already sent to an external model or tracing provider.
+
 ## Running tests
 
 Run the complete suite from the repository root:
@@ -268,39 +304,84 @@ Run the complete suite from the repository root:
 python -m pytest -q
 ```
 
+Run the same local quality gates as CI:
+
+```bash
+ruff check buddy tests
+pyright
+pytest --cov=buddy --cov-report=term-missing --cov-fail-under=80 -q
+```
+
 The tests cover model fallback selection, database migrations, timed compaction, Harness
 memory, session/game indexing and recall, provider cleanup, idempotent video analysis,
 source validation, context replacement/injection, and detailed video report caching.
+CI runs these checks on Python 3.10 and 3.14. Pyright checks production code; test doubles
+are validated through execution. When changing dependencies, update `pyproject.toml`, rebuild
+the environment, regenerate `requirements-lock.txt`, and run all three commands.
+
+## Troubleshooting
+
+- **Missing provider key:** copy `.env.example` to `.env` and fill the key required by the
+  selected model. OpenRouter fallback models can require `OPENROUTER_API_KEY` even when the
+  primary model is Gemini.
+- **Video analysis fails immediately:** verify that the file exists, has a supported suffix,
+  is no longer being written, and that `GOOGLE_API_KEY` is valid. Retry with
+  `BUDDY_DEBUG=true` for a traceback.
+- **SQLite reports a lock:** close other Buddy or video-analysis processes and retry. Do not
+  copy or delete either database while a process is writing it.
+- **Memory was not updated:** finish the chat cleanly, then restart Buddy. Failed jobs remain
+  checkpointed and are retried on a later startup.
+- **Dependency behavior differs:** recreate `.venv` and install with
+  `-c requirements-lock.txt`; the bounded ranges in `pyproject.toml` intentionally allow
+  compatible upgrades.
+
+For a detailed guide to module relationships, storage ownership, and runtime call flows, see
+[`map-project.md`](map-project.md).
 
 ## Project structure
 
 ```text
 game-buddy/
 ├── buddy/
-│   ├── agent.py               # Agent, capabilities, search, recall, and video tools
-│   ├── config.py              # Models and memory/compaction settings
-│   ├── database.py            # Raw conversations and session-state SQLite access
-│   ├── long_term_memory.py    # Harness Memory with a SQLite store
+│   ├── agent.py               # Main agent composition
+│   ├── config.py              # Grouped model, agent, memory, storage, and video settings
+│   ├── database.py            # Raw conversations and database initialization
 │   ├── main.py                # Terminal loop, startup consolidation, and Logfire
-│   ├── memory_analysis.py     # Completed-session long-term memory curator
-│   ├── memory_index.py        # Session/game search index and relations
-│   ├── memory_recall.py       # Bounded historical recall with Context Butler
-│   ├── prompts.py             # Centralized prompts and model instructions
-│   ├── timed_compaction.py    # Custom time-based summarizing compaction
-│   ├── video_cli.py           # Manual end-to-end clip analysis command
-│   ├── video_pipeline.py      # Overview -> Video Context Butler orchestration
-│   ├── video_storage.py       # Video metadata and reports in SQLite
-│   ├── video_context_*.py     # Bounded state selection and chat injection
-│   └── video_detail_*.py      # On-demand detail service and agent tool
+│   ├── prompts.py             # All LLM prompts, instructions, and injection markers
+│   ├── memory/                # Compaction, durable memory, indexing, and recall
+│   │   ├── analysis.py
+│   │   ├── compaction.py
+│   │   ├── context_butler.py
+│   │   ├── game.py
+│   │   ├── game_analysis.py
+│   │   ├── index.py
+│   │   ├── journal.py
+│   │   ├── long_term.py
+│   │   ├── recall.py
+│   │   └── session.py
+│   └── video/                 # Video domain, provider adapter, storage, and workflows
+│       ├── analysis_service.py
+│       ├── analyzer.py
+│       ├── cli.py
+│       ├── context_butler.py
+│       ├── context_injection.py
+│       ├── context_service.py
+│       ├── detail_service.py
+│       ├── detail_tool.py
+│       ├── gemini.py
+│       ├── models.py
+│       ├── pipeline.py
+│       ├── session_memory.py
+│       └── storage.py
 ├── tests/
-│   ├── conftest.py
-│   ├── test_agent.py
-│   ├── test_config.py
-│   ├── test_database.py
-│   ├── test_long_term_memory.py
-│   └── test_memory_analysis.py
+│   ├── conftest.py             # Shared in-memory database
+│   ├── test_*memory*.py        # Memory, index, recall, and compaction tests
+│   └── test_*video*.py         # Video domain, services, pipeline, storage, and CLI tests
 ├── data/                      # Runtime SQLite databases (ignored by Git)
+├── .github/workflows/ci.yml   # Python 3.10/3.14 quality gates
 ├── .env.example
+├── map-project.md             # Detailed module and runtime dependency map
 ├── pyproject.toml
+├── requirements-lock.txt      # Exact resolved development environment
 └── README.md
 ```

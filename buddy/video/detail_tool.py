@@ -1,15 +1,14 @@
 """Pydantic AI tool for question-specific re-analysis of stored gameplay."""
 
-from collections.abc import Awaitable, Callable
 import sqlite3
+from collections.abc import Awaitable, Callable
 
 from pydantic_ai import RunContext
 
-from buddy.config import VIDEO_DETAIL_MODEL
-from buddy.gemini_video_analyzer import GeminiVideoAnalyzer
-from buddy.video_detail_service import analyze_video_detail_source
-from buddy.video_models import VideoDetailAnswer
-
+from buddy.config import MODELS
+from buddy.video.detail_service import analyze_video_detail_source
+from buddy.video.gemini import GeminiVideoAnalyzer
+from buddy.video.models import VideoDetailAnswer
 
 AnalyzeVideoDetailTool = Callable[..., Awaitable[VideoDetailAnswer]]
 
@@ -31,7 +30,7 @@ def create_analyze_video_detail_tool(
         user needs. Never invent or modify a segment ID.
         """
         del ctx
-        async with GeminiVideoAnalyzer(model=VIDEO_DETAIL_MODEL) as analyzer:
+        async with GeminiVideoAnalyzer(model=MODELS.video_detail) as analyzer:
             return await analyze_video_detail_source(
                 conn,
                 analyzer,

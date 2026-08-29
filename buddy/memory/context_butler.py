@@ -6,27 +6,22 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunUsage
 from pydantic_ai.models import Model as PydanticModel
 
-from buddy.config import CONTEXT_BUTLER_MODEL, build_model
+from buddy.config import MEMORY, MODELS, build_model
 from buddy.prompts import (
     MEMORY_CONTEXT_BUTLER_INSTRUCTIONS,
     MEMORY_CONTEXT_BUTLER_PROMPT,
 )
 
 
-MAX_BUTLER_CONTEXT_CHARS = 1_500
-MAX_BUTLER_UNCERTAINTY_CHARS = 400
-MAX_BUTLER_SOURCES = 5
-
-
 class ContextButlerResult(BaseModel):
     """Small, source-aware context returned to the main chat agent."""
 
     enough_evidence: bool
-    context: str = Field(max_length=MAX_BUTLER_CONTEXT_CHARS)
-    sources: list[str] = Field(default_factory=list, max_length=MAX_BUTLER_SOURCES)
+    context: str = Field(max_length=MEMORY.context_chars)
+    sources: list[str] = Field(default_factory=list, max_length=MEMORY.context_sources)
     uncertainty: str | None = Field(
         default=None,
-        max_length=MAX_BUTLER_UNCERTAINTY_CHARS,
+        max_length=MEMORY.context_uncertainty_chars,
     )
 
 
@@ -52,7 +47,7 @@ def build_context_butler(
     model: str | PydanticModel | None = None,
 ) -> Agent[None, ContextButlerResult]:
     """Build the tool-less delegate with an explicitly configured model."""
-    butler_model = model if model is not None else build_model(CONTEXT_BUTLER_MODEL)
+    butler_model = model if model is not None else build_model(MODELS.memory_context_butler)
     return Agent[None, ContextButlerResult](
         model=butler_model,
         deps_type=type(None),

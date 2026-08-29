@@ -4,13 +4,13 @@ from dataclasses import dataclass
 import pytest
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
-from buddy.game_memory import ensure_game_document
-from buddy.game_memory_analysis import (
+from buddy.memory.game import ensure_game_document
+from buddy.memory.game_analysis import (
     GameMemoryAnalysisResult,
     GameProfileUpdate,
     update_game_profiles,
 )
-from buddy.long_term_memory import MEMORY_STORE_PATH
+from buddy.memory.long_term import MEMORY_STORE_PATH
 
 
 @dataclass
@@ -84,6 +84,23 @@ def test_game_profile_analyzer_receives_only_user_evidence(db):
 
     prompt = asyncio.run(scenario())
 
-    assert "User: Znalazłam zamknięte drzwi" in prompt
+    assert "Znalazłam zamknięte drzwi" in prompt
     assert "trzema żółwiami" not in prompt
     assert "Drzwi nie wymagają klucza" not in prompt
+
+
+def test_distinct_game_titles_do_not_share_a_colliding_slug(db):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        slash_title = await ensure_game_document(db, memory, "A/B")
+        spaced_title = await ensure_game_document(db, memory, "A B")
+        return slash_title, spaced_title
+
+    slash_title, spaced_title = asyncio.run(scenario())
+
+    assert slash_title.path == "main/games/a-b.md"
+    assert spaced_title.path.startswith("main/games/a-b-")
+    assert spaced_title.path.endswith(".md")
+    assert slash_title.path != spaced_title.path
+    assert slash_title.title == "A/B"
+    assert spaced_title.title == "A B"

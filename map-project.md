@@ -1,9 +1,7 @@
 # Project Map
 
 This document maps the production modules, runtime flows, storage layers, and tests of
-`game-buddy`. It describes the current implementation on the `feature/video-analysis`
-branch. Automatic game-window recording and autonomous time-driven agent rounds are not
-implemented yet.
+`game-buddy`.
 
 ## Runtime flows
 
@@ -13,30 +11,35 @@ implemented yet.
 buddy.main.main
   -> config.choose_model + config.build_model
   -> database.init_db
-       -> memory_index.init_memory_index
-       -> video_storage.init_video_storage
-  -> long_term_memory.create_long_term_memory
-  -> memory_analysis.process_pending_memories
-       -> session_memory.persist_session_document
-       -> memory_analysis._apply_long_term_memory
-       -> game_memory.link_session_to_games
-       -> game_memory_analysis.update_game_profiles
+       -> memory.index.init_memory_index
+       -> video.storage.init_video_storage
+  -> memory.long_term.create_long_term_memory
+  -> memory.analysis.process_pending_memories
+       -> memory.journal.get_or_create_memory_job
+       -> memory.session.persist_session_document
+       -> journal checkpoint: SESSION_PERSISTED
+       -> memory.analysis._apply_long_term_memory
+       -> journal checkpoint: GLOBAL_APPLIED + structured analyzer result
+       -> memory.game.link_session_to_games
+       -> memory.game_analysis.update_game_profiles
+       -> journal checkpoint: GAME_PROFILES_APPLIED
+       -> mark conversation analyzed and remove completed journal row
   -> agent.build_agent
-       -> timed_compaction.SummarizingCompactionTimed
-       -> long_term_memory.InjectionOnlyMemory
-       -> memory_recall.recall_memory
-       -> video_detail_tool.analyze_video_detail
+       -> memory.compaction.SummarizingCompactionTimed
+       -> memory.long_term.InjectionOnlyMemory
+       -> memory.recall.recall_memory
+       -> video.detail_tool.analyze_video_detail
        -> DuckDuckGo search
   -> terminal chat loop
-       -> video_storage.get_latest_pending_video_context
-       -> video_context_injection.inject_video_context
+       -> video.storage.get_latest_pending_video_context
+       -> video.context_injection.inject_video_context
        -> Agent.run_sync
        -> database.save_messages
-       -> video_storage.mark_video_context_injected_through
+       -> video.storage.mark_video_context_injected_through
   -> session shutdown
        -> database.finish_conversation
-       -> video_session_memory.build_session_video_observations
-       -> session_memory.persist_session_document
+       -> video.session_memory.build_session_video_observations
+       -> memory.session.persist_session_document
 ```
 
 Completed sessions are processed at the next application startup. A failed memory update
@@ -45,20 +48,22 @@ remains pending and does not block later sessions.
 ### General video analysis
 
 ```text
-buddy.video_cli
+buddy.video.cli
   -> database.init_db
-  -> gemini_video_analyzer.GeminiVideoAnalyzer
-  -> video_pipeline.process_video_file
-       -> video_analysis_service.register_and_analyze_video
-            -> video_storage.create_video_segment
-            -> video_storage.claim_video_segment_for_analysis
+  -> video.gemini.GeminiVideoAnalyzer
+  -> video.pipeline.process_video_file
+       -> video.analysis_service.register_and_analyze_video
+            -> SHA-256 recording key from bytes, UTC times, and conversation ID
+            -> video.storage.create_video_segment
+            -> video.storage.claim_video_segment_for_analysis
             -> GeminiVideoAnalyzer.analyze_overview
-            -> video_storage.save_video_report(mode=overview)
-       -> video_context_service.process_video_report_context
-            -> video_context_butler.build_video_context_prompt
+            -> validate every timestamp against segment duration
+            -> video.storage.save_video_report(mode=overview)
+       -> video.context_service.process_video_report_context
+            -> video.context_butler.build_video_context_prompt
             -> Video Context Butler Agent
             -> source validation
-            -> video_storage.save_video_context_update
+            -> video.storage.save_video_context_update
 ```
 
 The next turn of the matching conversation consumes the newest pending context update:
@@ -73,6 +78,8 @@ video_context_updates
 
 The replacement message stays separate from user statements. Timed compaction preserves
 only its newest version and never folds stale screen state into the rolling chat summary.
+Unassigned clips (`conversation_id=None`) never receive a previous replacement state and
+therefore cannot leak context between unrelated manual analyses.
 
 ### Detailed video analysis
 
@@ -80,12 +87,13 @@ only its newest version and never folds stale screen state into the rolling chat
 user asks about a visible or audible detail
   -> main agent finds a video://segment/... source in context
   -> analyze_video_detail tool
-       -> video_detail_service.parse_video_source
+       -> video.detail_service.parse_video_source
        -> validate segment ownership and timestamp range
-       -> reuse an identical cached detail report when available
+       -> build a canonical request key and acquire its in-process lock
+       -> reuse an identical indexed detail report when available
        -> GeminiVideoAnalyzer.analyze_detail
        -> validate evidence timestamps
-       -> video_storage.save_video_report(mode=detail)
+       -> video.storage.save_video_report(mode=detail, request_key=...)
   -> compact answer + validated video:// sources return to the main agent
 ```
 
@@ -115,7 +123,7 @@ Future recall uses a bounded retrieval pipeline:
 
 ```text
 recall_memory
-  -> memory_index.search_memory_documents
+  -> memory.index.search_memory_documents
   -> MemoryRecallService reads selected logical Markdown documents
   -> Context Butler reduces the retrieved documents
   -> source allow-list validation
@@ -124,7 +132,12 @@ recall_memory
 
 Global memory is based on explicit user statements. Video observations may enrich a
 confirmed game's profile and session report, but they cannot become global user facts by
-themselves.
+themselves. Raw structured `ModelMessage` objects are the preferred evidence source;
+complete user prompts are JSON-encoded one per line before they reach either memory
+analyzer, so multiline content and role-like text inside a user message are preserved.
+The global analyzer returns a structured replacement list in `global_facts` plus separate
+`games_with_user_state`; `memory.analysis.render_global_memory` is the only component that
+turns global facts into Markdown. This removes substring-based deletion of model output.
 
 ## Storage map
 
@@ -136,14 +149,21 @@ conversations
   1 -> many video_segments
 
 video_segments
+  recording_key = SHA-256(bytes + capture metadata)
   1 -> many video_reports
 
 video_reports (overview)
   1 -> 0..1 video_context_updates
 
+video_reports (detail)
+  unique request_key -> one cached answer
+
 memory_documents
   session --belongs_to_game--> game
   indexed by memory_search (FTS5)
+
+memory_processing_jobs
+  conversation_id -> ordered cross-database checkpoint + retry payload
 ```
 
 Main responsibilities:
@@ -153,6 +173,11 @@ Main responsibilities:
 - session-to-game relations;
 - normalized paths to local video files;
 - overview/detail reports and compact context updates.
+
+The database uses `PRAGMA user_version`. Schema version 2 migrated the original path-unique
+video tables to recording keys and added indexed detail request keys. Version 3 adds the
+memory-processing journal. Existing segment/report/context IDs are preserved. Storage reads
+validate report JSON and context-source JSON before returning domain objects.
 
 ### `data/memory.db`
 
@@ -181,32 +206,33 @@ and are deleted after generation whenever cleanup succeeds.
 | Module | Responsibility | Main dependencies / consumers |
 | --- | --- | --- |
 | `buddy/main.py` | Application composition, terminal loop, startup consolidation, session shutdown | Coordinates chat, memory, video injection, and persistence |
-| `buddy/config.py` | Model catalog, fallback tiers, memory/video model roles, compaction settings | Used by all agent and analyzer factories |
+| `buddy/config.py` | Central immutable sections for models, runtime diagnostics, agent, storage, memory, video, and MIME types | Used by all factories, services, models, and entry points |
 | `buddy/agent.py` | Main Pydantic AI agent factory | Registers compaction, global memory, recall, video detail, and web search |
 | `buddy/prompts.py` | Central LLM instructions and prompt templates | Used by chat, memory, Butler, and video analyzers |
 | `buddy/database.py` | SQLite connection, conversations, and raw message batches | Initializes memory-index and video-storage schemas |
-| `buddy/timed_compaction.py` | Time-window short-memory compaction and history formatting | Main agent capability and session-memory formatter |
-| `buddy/long_term_memory.py` | Injection-only Harness Memory backed by SQLite | Used by chat, recall, and post-session analyzers |
-| `buddy/session_memory.py` | Logical `main/sessions/*.md` reports and indexing | Called at shutdown and pending-memory processing |
-| `buddy/memory_index.py` | Memory metadata, FTS5 search, and session-to-game relations | Used by session/game memory and recall |
-| `buddy/memory_analysis.py` | Completed-session global consolidation coordinator | Updates global memory, session documents, and game profiles |
-| `buddy/game_memory.py` | Game-name normalization, paths, documents, and relations | Used by memory analysis and recall |
-| `buddy/game_memory_analysis.py` | Source-aware updates of allowed `main/games/*.md` profiles | Receives explicit user evidence and video observations |
-| `buddy/memory_recall.py` | Bounded historical retrieval and reduction | Uses the memory index, Harness store, and Context Butler |
-| `buddy/context_butler.py` | Small agent reducing recalled memory documents | Used only by `memory_recall.py` |
-| `buddy/video_models.py` | Video enums, dataclasses, and Pydantic result models | Shared contract for all video modules |
-| `buddy/video_analyzer.py` | Provider-neutral overview/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
-| `buddy/gemini_video_analyzer.py` | Gemini upload, polling, structured generation, parsing, and cleanup | Native provider adapter for overview and detail modes |
-| `buddy/video_storage.py` | Video schema and persistence operations | Repository used by every video service and the chat loop |
-| `buddy/video_analysis_service.py` | Atomic claim, overview persistence, retry, and reuse lifecycle | Connects `VideoAnalyzer` to `video_storage` |
-| `buddy/video_context_butler.py` | Replacement-state prompt construction and source validation | Used by `video_context_service.py` |
-| `buddy/video_context_service.py` | Idempotent overview-to-context reduction | Connects storage to Video Context Butler |
-| `buddy/video_pipeline.py` | End-to-end overview and context-update orchestration | Used by the manual CLI and future capture worker |
-| `buddy/video_context_injection.py` | Replaces prior gameplay state in chat history | Used by the terminal loop |
-| `buddy/video_detail_service.py` | Internal URI parsing, range validation, cache, and detailed reports | Used by the detail tool |
-| `buddy/video_detail_tool.py` | Main-agent tool for question-specific clip inspection | Creates a Gemini analyzer per invocation |
-| `buddy/video_session_memory.py` | Bounded source-aware video evidence for completed sessions | Used by shutdown and memory processing |
-| `buddy/video_cli.py` | Manual end-to-end analysis command | Composes SQLite, Gemini, pipeline, and terminal output |
+| `buddy/memory/compaction.py` | Time-window short-memory compaction and history formatting | Main agent capability and session-memory formatter |
+| `buddy/memory/long_term.py` | Injection-only Harness Memory backed by SQLite | Used by chat, recall, and post-session analyzers |
+| `buddy/memory/session.py` | Logical `main/sessions/*.md` reports and indexing | Called at shutdown and pending-memory processing |
+| `buddy/memory/index.py` | Memory metadata, FTS5 search, and session-to-game relations | Used by session/game memory and recall |
+| `buddy/memory/analysis.py` | Completed-session global consolidation coordinator | Updates global memory, session documents, and game profiles |
+| `buddy/memory/journal.py` | Durable cross-database checkpoints and retry payloads | Lets pending-memory processing resume after session, global, or game stages |
+| `buddy/memory/game.py` | Game-name normalization, collision-safe paths, documents, and relations | Used by memory analysis and recall; adds a title hash only when two distinct titles share a slug |
+| `buddy/memory/game_analysis.py` | Source-aware updates of allowed `main/games/*.md` profiles | Receives explicit user evidence and video observations |
+| `buddy/memory/recall.py` | Bounded historical retrieval and reduction | Uses the memory index, Harness store, and Context Butler |
+| `buddy/memory/context_butler.py` | Small agent reducing recalled memory documents | Used only by `memory.recall.py` |
+| `buddy/video/models.py` | Video enums, dataclasses, and Pydantic result models | Shared contract for all video modules |
+| `buddy/video/analyzer.py` | Provider-neutral overview/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
+| `buddy/video/gemini.py` | Gemini upload, polling, structured generation, parsing, and cleanup | Native provider adapter for overview and detail modes |
+| `buddy/video/storage.py` | Versioned video schema, validated persistence, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
+| `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, timeline validation, retry, and reuse | Connects `VideoAnalyzer` to `video.storage` |
+| `buddy/video/context_butler.py` | Replacement-state prompt construction and source validation | Used by `video.context_service.py` |
+| `buddy/video/context_service.py` | Idempotent overview-to-context reduction | Connects storage to Video Context Butler |
+| `buddy/video/pipeline.py` | End-to-end overview and context-update orchestration | Used by the manual CLI and future capture worker |
+| `buddy/video/context_injection.py` | Replaces prior gameplay state in chat history | Used by the terminal loop |
+| `buddy/video/detail_service.py` | Internal URI parsing, range validation, cache, and detailed reports | Used by the detail tool |
+| `buddy/video/detail_tool.py` | Main-agent tool for question-specific clip inspection | Creates a Gemini analyzer per invocation |
+| `buddy/video/session_memory.py` | Bounded source-aware video evidence for completed sessions | Used by shutdown and memory processing |
+| `buddy/video/cli.py` | Manual end-to-end analysis command | Composes SQLite, Gemini, pipeline, and terminal output |
 
 ## Test map
 
@@ -214,23 +240,36 @@ and are deleted after generation whenever cleanup succeeds.
 | --- | --- |
 | `tests/conftest.py` | Fresh shared SQLite `:memory:` fixture |
 | `tests/test_config.py` | Model roles, tiers, and fallback selection |
-| `tests/test_agent.py` | Timed compaction, incremental summaries, and history filtering |
+| `tests/test_timed_compaction.py` | Timed compaction, incremental summaries, and history filtering |
 | `tests/test_long_term_memory.py` | Harness store, injection-only behavior, and agent capabilities |
-| `tests/test_database.py` | Conversations, raw messages, completion, and migrations |
+| `tests/test_database.py` | Conversations, raw messages, completion, schema versioning, and legacy migrations |
 | `tests/test_memory_index.py` | FTS5 retrieval, relations, path validation, and dates |
 | `tests/test_memory_recall.py` | Retrieval fallback, Context Butler, and source validation |
 | `tests/test_memory_analysis.py` | Session consolidation, retry, games, and video evidence |
 | `tests/test_game_memory_analysis.py` | Allowed-profile and evidence isolation |
 | `tests/test_video_models.py` | Video domain validation |
 | `tests/test_gemini_video_analyzer.py` | SDK adapter, structured modes, provider errors, and cleanup |
-| `tests/test_video_storage.py` | Segment/report/context persistence and lifecycle |
-| `tests/test_video_analysis_service.py` | Atomic claim, failure retry, and overview reuse |
+| `tests/test_video_storage.py` | State machine, validated persistence, corruption handling, and lifecycle |
+| `tests/test_video_analysis_service.py` | Content identity, timeline bounds, atomic claim, retry, and overview reuse |
 | `tests/test_video_context_service.py` | Replacement state, no-change decisions, sources, and ordering |
 | `tests/test_video_context_injection.py` | Context replacement, acknowledgement, and session isolation |
-| `tests/test_video_detail_service.py` | Safe URIs, time ranges, evidence validation, and detail cache |
+| `tests/test_video_detail_service.py` | Safe URIs, time ranges, evidence validation, and concurrent detail cache |
 | `tests/test_video_pipeline.py` | Overview-to-context pipeline and partial-failure recovery |
+| `tests/test_video_cli.py` | Parser defaults, input validation, exit codes, and CLI orchestration |
+
+## Quality and dependency controls
+
+`pyproject.toml` is the source of supported dependency ranges and configures pytest,
+Ruff, and Pyright. `requirements-lock.txt` records the fully resolved development
+environment for reproducible installation. `.github/workflows/ci.yml` runs linting,
+production-code type checks, and the complete test suite on Python 3.10 and 3.14; total
+coverage must remain at or above 80%.
 
 ## Current scope boundary
+
+Operational setup, environment variables, privacy boundaries, paired-database backup and
+deletion, troubleshooting, and contributor quality commands are maintained in `README.md`.
+This map remains the source for module ownership and code-to-storage relationships.
 
 Implemented:
 

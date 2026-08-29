@@ -1,15 +1,18 @@
 """Terminal entry point: builds the agent, opens the database, runs the chat loop."""
 import asyncio
+import traceback
+from typing import cast
 
 import logfire
 from dotenv import load_dotenv
+from pydantic_ai.messages import ModelMessage
 
 load_dotenv()
 logfire.configure(send_to_logfire="if-token-present")
 logfire.instrument_pydantic_ai()
 
-from buddy.config import choose_model, build_model
 from buddy.agent import build_agent
+from buddy.config import RUNTIME, build_model, choose_model
 from buddy.database import (
     create_conversation,
     finish_conversation,
@@ -17,20 +20,24 @@ from buddy.database import (
     init_db,
     save_messages,
 )
-from buddy.long_term_memory import create_long_term_memory
-from buddy.game_memory_analysis import build_game_memory_analyzer
-from buddy.memory_analysis import build_memory_analyzer, process_pending_memories
-from buddy.session_memory import (
+from buddy.memory.analysis import (
+    MemoryAnalyzer,
+    build_memory_analyzer,
+    process_pending_memories,
+)
+from buddy.memory.compaction import format_messages
+from buddy.memory.game_analysis import GameMemoryAnalyzer, build_game_memory_analyzer
+from buddy.memory.long_term import create_long_term_memory
+from buddy.memory.session import (
     parse_database_timestamp,
     persist_session_document,
 )
-from buddy.timed_compaction import format_messages
-from buddy.video_context_injection import inject_video_context
-from buddy.video_storage import (
+from buddy.video.context_injection import inject_video_context
+from buddy.video.session_memory import build_session_video_observations
+from buddy.video.storage import (
     get_latest_pending_video_context,
     mark_video_context_injected_through,
 )
-from buddy.video_session_memory import build_session_video_observations
 
 
 def main():
@@ -48,9 +55,9 @@ def main():
             report = asyncio.run(
                 process_pending_memories(
                     conn,
-                    analyzer,
+                    cast(MemoryAnalyzer, analyzer),
                     memory,
-                    game_analyzer,
+                    cast(GameMemoryAnalyzer, game_analyzer),
                 )
             )
             if report.processed:
@@ -72,6 +79,8 @@ def main():
                     )
         except Exception as error:
             print(f"[Memory analysis unavailable: {error}]")
+            if RUNTIME.show_tracebacks:
+                traceback.print_exc()
 
     agent = build_agent(
         model_object,
@@ -79,7 +88,7 @@ def main():
         memory_connection=conn,
     )
     conversation_id: int | None = None
-    history = []
+    history: list[ModelMessage] = []
 
     try:
         print("Ready to go. Ctrl + C to end session.\n")
@@ -122,6 +131,8 @@ def main():
                     )
             except Exception as e:
                 print(f"\n[Error: {e}]\n")
+                if RUNTIME.show_tracebacks:
+                    traceback.print_exc()
     finally:
         try:
             if conversation_id is not None:
@@ -152,6 +163,8 @@ def main():
                     )
                 except Exception as error:
                     print(f"[Session memory save failed: {error}]")
+                    if RUNTIME.show_tracebacks:
+                        traceback.print_exc()
         finally:
             conn.close()
 

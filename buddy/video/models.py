@@ -7,6 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
+from buddy.config import VIDEO
+
 
 class VideoSegmentStatus(str, Enum):
     """Lifecycle of a recorded segment's overview analysis."""
@@ -59,9 +61,18 @@ class VideoOverview(BaseModel):
     """Structured fast analysis of one completed video segment."""
 
     summary: str = Field(min_length=1)
-    events: list[VideoEvent] = Field(default_factory=list)
-    visible_text: list[VisibleTextObservation] = Field(default_factory=list)
-    uncertainties: list[str] = Field(default_factory=list)
+    events: list[VideoEvent] = Field(
+        default_factory=list,
+        max_length=VIDEO.max_overview_events,
+    )
+    visible_text: list[VisibleTextObservation] = Field(
+        default_factory=list,
+        max_length=VIDEO.max_visible_text_observations,
+    )
+    uncertainties: list[str] = Field(
+        default_factory=list,
+        max_length=VIDEO.max_uncertainties,
+    )
     possible_game: str | None = None
     confidence: float | None = Field(default=None, ge=0, le=1)
 
@@ -104,6 +115,7 @@ class VideoSegment:
     id: int
     conversation_id: int | None
     file_path: Path
+    recording_key: str
     started_at: datetime
     ended_at: datetime
     duration_seconds: float
@@ -126,6 +138,7 @@ class VideoReport:
     segment_id: int
     mode: VideoReportMode
     question: str | None
+    request_key: str | None
     provider: str
     model_name: str
     content: dict[str, object]

@@ -6,26 +6,69 @@ build-backend = "setuptools.build_meta"
 name = "game-buddy"
 version = "0.1.0"
 description = "Terminal chatbot for gaming discussions, built with Pydantic AI"
-requires-python = ">=3.10"
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+authors = [{ name = "wyluzaj" }]
+keywords = ["gaming", "ai", "pydantic-ai", "memory", "video-analysis"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 dependencies = [
     "google-genai>=2.10.0,<3.0.0",
     "logfire[httpx]>=4.16.0,<5.0.0",
     "pydantic>=2.10.0,<3.0.0",
     "pydantic-ai-slim[duckduckgo,google,openrouter]>=2.22.0,<2.23.0",
-    # timed_compaction.py uses internal helpers from the Harness 0.15 series.
+    # memory/compaction.py uses internal helpers from the Harness 0.15 series.
     "pydantic-ai-harness>=0.15.0,<0.16.0",
     "python-dotenv>=1.0.0,<2.0.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0,<10.0.0"]
+dev = [
+    "pyright>=1.1.400,<2.0.0",
+    "pytest>=8.0.0,<10.0.0",
+    "pytest-cov>=6.0.0,<8.0.0",
+    "ruff>=0.12.0,<1.0.0",
+]
+
+[project.urls]
+Repository = "https://github.com/wyluzaj/game-buddy"
+Issues = "https://github.com/wyluzaj/game-buddy/issues"
 
 [tool.pytest.ini_options]
 # Where pytest looks for tests.
 testpaths = ["tests"]
+addopts = ["--strict-markers"]
 
 [project.scripts]
 buddy = "buddy.main:main"
+buddy-video = "buddy.video.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["buddy*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"buddy/main.py" = ["E402"]
+
+[tool.pyright]
+include = ["buddy"]
+exclude = [".venv"]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
