@@ -10,14 +10,12 @@ import sys
 from dotenv import load_dotenv
 from pydantic_ai.exceptions import AgentRunError
 
+from buddy.config import STORAGE, VIDEO
 from buddy.database import init_db
-from buddy.gemini_video_analyzer import GeminiVideoAnalyzer
-from buddy.video_analyzer import VideoAnalysisError
-from buddy.video_context_butler import build_video_context_butler
-from buddy.video_pipeline import VideoProcessingOutcome, process_video_file
-
-
-DEFAULT_MANUAL_VIDEO_DURATION_SECONDS = 120.0
+from buddy.video.gemini import GeminiVideoAnalyzer
+from buddy.video.analyzer import VideoAnalysisError
+from buddy.video.context_butler import build_video_context_butler
+from buddy.video.pipeline import VideoProcessingOutcome, process_video_file
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--duration-seconds",
         type=float,
-        default=DEFAULT_MANUAL_VIDEO_DURATION_SECONDS,
+        default=VIDEO.manual_duration_seconds,
         help="Recorded duration used for timeline metadata (default: 120).",
     )
     parser.add_argument(
@@ -39,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--database",
-        default="data/chatbot.db",
+        default=STORAGE.chat_database_path,
         help="SQLite database path (default: data/chatbot.db).",
     )
     return parser

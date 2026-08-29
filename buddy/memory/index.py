@@ -7,9 +7,7 @@ from pathlib import PurePosixPath
 import re
 import sqlite3
 
-
-MAX_MEMORY_SEARCH_RESULTS = 20
-
+from buddy.config import MEMORY
 
 class MemoryDocumentType(str, Enum):
     """Kinds of memory documents currently supported by the application."""
@@ -279,10 +277,10 @@ def search_memory_documents(
     limit: int = 5,
 ) -> list[MemoryDocument]:
     """Find bounded documents by text, type, game relation, and date."""
-    if not 1 <= limit <= MAX_MEMORY_SEARCH_RESULTS:
+    if not 1 <= limit <= MEMORY.search_results:
         raise ValueError(
             f"The memory search limit must be between 1 and "
-            f"{MAX_MEMORY_SEARCH_RESULTS}."
+            f"{MEMORY.search_results}."
         )
 
     normalized_from = _normalize_timestamp(occurred_from)

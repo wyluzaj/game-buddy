@@ -7,7 +7,8 @@ import unicodedata
 
 from pydantic_ai_harness.memory import Memory
 
-from buddy.memory_index import (
+from buddy.config import MEMORY, STORAGE
+from buddy.memory.index import (
     MemoryDocument,
     MemoryDocumentType,
     MemoryRelationType,
@@ -16,17 +17,12 @@ from buddy.memory_index import (
 )
 
 
-GAME_MEMORY_PREFIX = "main/games"
-MAX_GAME_NAME_CHARS = 100
-MAX_GAME_DOCUMENT_CHARS = 100_000
-
-
 def normalize_game_name(name: str) -> str:
     """Normalize model output into a bounded, single-line display name."""
     normalized = " ".join(name.split()).strip()
     if not normalized:
         raise ValueError("A game name cannot be empty.")
-    return normalized[:MAX_GAME_NAME_CHARS]
+    return normalized[: MEMORY.game_name_chars]
 
 
 def game_memory_path(name: str) -> str:
@@ -40,7 +36,7 @@ def game_memory_path(name: str) -> str:
     if not slug:
         digest = sha256(normalized.casefold().encode()).hexdigest()[:12]
         slug = f"game-{digest}"
-    return f"{GAME_MEMORY_PREFIX}/{slug}.md"
+    return f"{STORAGE.game_memory_prefix}/{slug}.md"
 
 
 async def ensure_game_document(
@@ -51,7 +47,7 @@ async def ensure_game_document(
     """Create a minimal game profile once and ensure it remains indexed."""
     title = normalize_game_name(name)
     path = game_memory_path(title)
-    memory_file = await memory.store.read(path, max_chars=MAX_GAME_DOCUMENT_CHARS)
+    memory_file = await memory.store.read(path, max_chars=MEMORY.game_document_chars)
     if memory_file is None:
         content = f"# {title}\n"
         await memory.store.write(path, content, expected_version=None)

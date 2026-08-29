@@ -8,15 +8,16 @@ import sqlite3
 
 from pydantic import ValidationError
 
-from buddy.video_analyzer import VideoAnalyzer
-from buddy.video_models import (
+from buddy.config import VIDEO
+from buddy.video.analyzer import VideoAnalyzer
+from buddy.video.models import (
     VideoOverview,
     VideoReport,
     VideoReportMode,
     VideoSegment,
     VideoSegmentStatus,
 )
-from buddy.video_storage import (
+from buddy.video.storage import (
     claim_video_segment_for_analysis,
     create_video_segment,
     get_video_reports,
@@ -25,9 +26,6 @@ from buddy.video_storage import (
     save_video_report,
     update_video_segment_status,
 )
-
-
-MAX_STORED_VIDEO_ERROR_CHARS = 2_000
 
 
 class VideoSegmentStateError(RuntimeError):
@@ -154,4 +152,4 @@ def _load_completed_outcome(
 def _failure_reason(exc: Exception) -> str:
     message = str(exc).strip()
     reason = f"{type(exc).__name__}: {message}" if message else type(exc).__name__
-    return reason[:MAX_STORED_VIDEO_ERROR_CHARS]
+    return reason[: VIDEO.stored_error_chars]

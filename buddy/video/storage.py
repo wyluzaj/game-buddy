@@ -6,7 +6,7 @@ from pathlib import Path
 import sqlite3
 from typing import Mapping
 
-from buddy.video_models import (
+from buddy.video.models import (
     VideoContextUpdate,
     VideoReport,
     VideoReportMode,

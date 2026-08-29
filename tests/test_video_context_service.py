@@ -5,14 +5,14 @@ from datetime import datetime, timedelta, timezone
 from pydantic_ai import RunUsage
 from pydantic_ai.models.fallback import FallbackModel
 
-from buddy.config import MODEL_TIERS, VIDEO_CONTEXT_BUTLER_MODEL
-from buddy.video_context_butler import (
+from buddy.config import MODEL_TIERS, MODELS
+from buddy.video.context_butler import (
     VideoContextButlerResult,
     build_video_context_butler,
 )
-from buddy.video_context_service import process_video_report_context
-from buddy.video_models import VideoEvent, VideoOverview, VideoReportMode
-from buddy.video_storage import (
+from buddy.video.context_service import process_video_report_context
+from buddy.video.models import VideoEvent, VideoOverview, VideoReportMode
+from buddy.video.storage import (
     create_video_segment,
     get_latest_video_context,
     save_video_report,
@@ -92,11 +92,11 @@ def test_video_context_butler_uses_its_explicit_configured_model(monkeypatch):
     butler = build_video_context_butler()
 
     assert isinstance(butler.model, FallbackModel)
-    expected = [VIDEO_CONTEXT_BUTLER_MODEL.value.split(":", 1)[1]] + [
+    expected = [MODELS.video_context_butler.value.split(":", 1)[1]] + [
         model.value.split(":", 1)[1]
         for model, tier in MODEL_TIERS.items()
-        if tier == MODEL_TIERS[VIDEO_CONTEXT_BUTLER_MODEL]
-        and model is not VIDEO_CONTEXT_BUTLER_MODEL
+        if tier == MODEL_TIERS[MODELS.video_context_butler]
+        and model is not MODELS.video_context_butler
     ]
     assert [model.model_name for model in butler.model.models] == expected
 

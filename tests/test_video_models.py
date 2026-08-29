@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from buddy.video_models import VideoEvent
+from buddy.video.models import VideoEvent
 
 
 def test_video_event_rejects_an_inverted_time_range():

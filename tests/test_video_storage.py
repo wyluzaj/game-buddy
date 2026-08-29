@@ -3,11 +3,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from buddy.database import create_conversation
-from buddy.video_models import (
+from buddy.video.models import (
     VideoReportMode,
     VideoSegmentStatus,
 )
-from buddy.video_storage import (
+from buddy.video.storage import (
     create_video_segment,
     get_video_reports,
     get_video_segment,

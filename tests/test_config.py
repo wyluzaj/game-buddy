@@ -2,9 +2,7 @@ from pydantic_ai.models.fallback import FallbackModel
 
 from buddy.config import (
     MODEL_TIERS,
-    VIDEO_DETAIL_MODEL,
-    VIDEO_CONTEXT_BUTLER_MODEL,
-    VIDEO_OVERVIEW_MODEL,
+    MODELS,
     Model,
     build_model,
 )
@@ -37,6 +35,6 @@ def test_fallback_list_contains_only_same_tier_peers(monkeypatch):
 
 def test_video_analysis_models_are_configured_explicitly():
     """Overview and detail analysis can evolve independently in config."""
-    assert VIDEO_OVERVIEW_MODEL is Model.GEMINI_LITE
-    assert VIDEO_DETAIL_MODEL is Model.GEMINI_LITE
-    assert VIDEO_CONTEXT_BUTLER_MODEL is Model.GEMINI_LITE
+    assert MODELS.video_overview is Model.GEMINI_LITE
+    assert MODELS.video_detail is Model.GEMINI_LITE
+    assert MODELS.video_context_butler is Model.GEMINI_LITE

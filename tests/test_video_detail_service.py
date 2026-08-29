@@ -5,18 +5,18 @@ from pathlib import Path
 import pytest
 
 from buddy.database import create_conversation
-from buddy.video_detail_service import (
+from buddy.video.detail_service import (
     VideoDetailStateError,
     analyze_video_detail_source,
     parse_video_source,
 )
-from buddy.video_models import (
+from buddy.video.models import (
     VideoDetailAnalysis,
     VideoDetailObservation,
     VideoOverview,
     VideoReportMode,
 )
-from buddy.video_storage import (
+from buddy.video.storage import (
     create_video_segment,
     get_video_reports,
     save_video_report,

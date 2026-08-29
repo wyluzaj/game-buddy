@@ -10,26 +10,22 @@ from pydantic import BaseModel
 from pydantic_ai import RunContext, RunUsage
 from pydantic_ai_harness.memory import Memory
 
-from buddy.context_butler import (
+from buddy.config import MEMORY
+from buddy.memory.context_butler import (
     ContextButler,
     ContextButlerResult,
     build_context_butler,
     build_memory_context_prompt,
     validate_butler_sources,
 )
-from buddy.game_memory import game_memory_path
-from buddy.memory_index import (
+from buddy.memory.game import game_memory_path
+from buddy.memory.index import (
     MemoryDocument,
     MemoryDocumentType,
     get_memory_document,
     get_session_game_documents,
     search_memory_documents,
 )
-
-
-MAX_RECALL_RESULTS = 5
-MAX_RECALL_DOCUMENT_CHARS = 4_000
-MAX_RECALL_SOURCE_CHARS = 1_000_000
 
 
 class MemoryRecallType(str, Enum):
@@ -79,9 +75,9 @@ class MemoryRecallService:
         limit: int = 3,
     ) -> MemoryRecallResult:
         """Return a bounded profile/session set matching explicit filters."""
-        if not 1 <= limit <= MAX_RECALL_RESULTS:
+        if not 1 <= limit <= MEMORY.recall_results:
             raise ValueError(
-                f"Recall limit must be between 1 and {MAX_RECALL_RESULTS}."
+                f"Recall limit must be between 1 and {MEMORY.recall_results}."
             )
         occurred_from, occurred_before = _parse_date_range(date_from, date_to)
         normalized_query = query.strip() if query and query.strip() else None
@@ -183,7 +179,7 @@ class MemoryRecallService:
             self._conn,
             query=game,
             document_type=MemoryDocumentType.GAME,
-            limit=MAX_RECALL_RESULTS,
+            limit=MEMORY.recall_results,
         )
         if len(candidates) == 1:
             return candidates[0], None
@@ -208,7 +204,7 @@ class MemoryRecallService:
         )
         memory_file = await self._memory.store.read(
             document.path,
-            max_chars=MAX_RECALL_SOURCE_CHARS,
+            max_chars=MEMORY.recall_source_chars,
         )
         if memory_file is None:
             content = "(Indexed document is missing from Harness Memory.)"
@@ -361,7 +357,7 @@ def _parse_date(value: str, field_name: str) -> date:
 
 def _bounded_excerpt(content: str, query: str | None) -> tuple[str, bool]:
     """Return a bounded excerpt around the first matching query term."""
-    if len(content) <= MAX_RECALL_DOCUMENT_CHARS:
+    if len(content) <= MEMORY.recall_document_chars:
         return content, False
 
     match_index = 0
@@ -377,9 +373,9 @@ def _bounded_excerpt(content: str, query: str | None) -> tuple[str, bool]:
             match_index = min(positions)
 
     start = max(0, match_index - 500)
-    end = min(len(content), start + MAX_RECALL_DOCUMENT_CHARS)
-    if end - start < MAX_RECALL_DOCUMENT_CHARS:
-        start = max(0, end - MAX_RECALL_DOCUMENT_CHARS)
+    end = min(len(content), start + MEMORY.recall_document_chars)
+    if end - start < MEMORY.recall_document_chars:
+        start = max(0, end - MEMORY.recall_document_chars)
     excerpt = content[start:end]
     if start > 0:
         excerpt = "…" + excerpt[1:]

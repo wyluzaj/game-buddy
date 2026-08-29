@@ -17,20 +17,20 @@ from buddy.database import (
     init_db,
     save_messages,
 )
-from buddy.long_term_memory import create_long_term_memory
-from buddy.game_memory_analysis import build_game_memory_analyzer
-from buddy.memory_analysis import build_memory_analyzer, process_pending_memories
-from buddy.session_memory import (
+from buddy.memory.long_term import create_long_term_memory
+from buddy.memory.game_analysis import build_game_memory_analyzer
+from buddy.memory.analysis import build_memory_analyzer, process_pending_memories
+from buddy.memory.session import (
     parse_database_timestamp,
     persist_session_document,
 )
-from buddy.timed_compaction import format_messages
-from buddy.video_context_injection import inject_video_context
-from buddy.video_storage import (
+from buddy.memory.compaction import format_messages
+from buddy.video.context_injection import inject_video_context
+from buddy.video.storage import (
     get_latest_pending_video_context,
     mark_video_context_injected_through,
 )
-from buddy.video_session_memory import build_session_video_observations
+from buddy.video.session_memory import build_session_video_observations
 
 
 def main():

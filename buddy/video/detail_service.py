@@ -6,22 +6,22 @@ import sqlite3
 
 from pydantic import ValidationError
 
-from buddy.video_analyzer import VideoDetailAnalyzer
-from buddy.video_models import (
+from buddy.config import VIDEO
+from buddy.video.analyzer import VideoDetailAnalyzer
+from buddy.video.models import (
     VideoDetailAnalysis,
     VideoDetailAnswer,
     VideoReport,
     VideoReportMode,
     VideoSegmentStatus,
 )
-from buddy.video_storage import (
+from buddy.video.storage import (
     get_video_reports,
     get_video_segment,
     save_video_report,
 )
 
 
-MAX_VIDEO_DETAIL_QUESTION_CHARS = 500
 _VIDEO_SOURCE_PATTERN = re.compile(
     r"^video://segment/(?P<segment_id>[1-9]\d*)"
     r"(?:\?t=(?P<start>\d+(?:\.\d+)?)-(?P<end>\d+(?:\.\d+)?))?$"
@@ -51,10 +51,10 @@ async def analyze_video_detail_source(
     normalized_question = " ".join(question.split())
     if not normalized_question:
         raise ValueError("A detailed video question cannot be empty.")
-    if len(normalized_question) > MAX_VIDEO_DETAIL_QUESTION_CHARS:
+    if len(normalized_question) > VIDEO.detail_question_chars:
         raise ValueError(
             f"A detailed video question cannot exceed "
-            f"{MAX_VIDEO_DETAIL_QUESTION_CHARS} characters."
+            f"{VIDEO.detail_question_chars} characters."
         )
 
     parsed = parse_video_source(conn, source_uri)

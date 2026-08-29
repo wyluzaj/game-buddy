@@ -104,7 +104,7 @@ python -c "import sqlite3; c=sqlite3.connect('data/chatbot.db'); print(c.execute
 Analyze a completed recording and associate it with that conversation:
 
 ```powershell
-python -m buddy.video_cli "C:\path\to\recording.mp4" --duration-seconds 120 --conversation-id 1
+python -m buddy.video.cli "C:\path\to\recording.mp4" --duration-seconds 120 --conversation-id 1
 ```
 
 The next user turn receives the compact observed-game state. If the user asks for a detail
@@ -277,30 +277,42 @@ source validation, context replacement/injection, and detailed video report cach
 ```text
 game-buddy/
 ├── buddy/
-│   ├── agent.py               # Agent, capabilities, search, recall, and video tools
-│   ├── config.py              # Models and memory/compaction settings
-│   ├── database.py            # Raw conversations and session-state SQLite access
-│   ├── long_term_memory.py    # Harness Memory with a SQLite store
+│   ├── agent.py               # Main agent composition
+│   ├── config.py              # Grouped model, agent, memory, storage, and video settings
+│   ├── database.py            # Raw conversations and database initialization
 │   ├── main.py                # Terminal loop, startup consolidation, and Logfire
-│   ├── memory_analysis.py     # Completed-session long-term memory curator
-│   ├── memory_index.py        # Session/game search index and relations
-│   ├── memory_recall.py       # Bounded historical recall with Context Butler
-│   ├── prompts.py             # Centralized prompts and model instructions
-│   ├── timed_compaction.py    # Custom time-based summarizing compaction
-│   ├── video_cli.py           # Manual end-to-end clip analysis command
-│   ├── video_pipeline.py      # Overview -> Video Context Butler orchestration
-│   ├── video_storage.py       # Video metadata and reports in SQLite
-│   ├── video_context_*.py     # Bounded state selection and chat injection
-│   └── video_detail_*.py      # On-demand detail service and agent tool
+│   ├── prompts.py             # All LLM prompts, instructions, and injection markers
+│   ├── memory/                # Compaction, durable memory, indexing, and recall
+│   │   ├── analysis.py
+│   │   ├── compaction.py
+│   │   ├── context_butler.py
+│   │   ├── game.py
+│   │   ├── game_analysis.py
+│   │   ├── index.py
+│   │   ├── long_term.py
+│   │   ├── recall.py
+│   │   └── session.py
+│   └── video/                 # Video domain, provider adapter, storage, and workflows
+│       ├── analysis_service.py
+│       ├── analyzer.py
+│       ├── cli.py
+│       ├── context_butler.py
+│       ├── context_injection.py
+│       ├── context_service.py
+│       ├── detail_service.py
+│       ├── detail_tool.py
+│       ├── gemini.py
+│       ├── models.py
+│       ├── pipeline.py
+│       ├── session_memory.py
+│       └── storage.py
 ├── tests/
-│   ├── conftest.py
-│   ├── test_agent.py
-│   ├── test_config.py
-│   ├── test_database.py
-│   ├── test_long_term_memory.py
-│   └── test_memory_analysis.py
+│   ├── conftest.py             # Shared in-memory database
+│   ├── test_*memory*.py        # Memory, index, recall, and compaction tests
+│   └── test_*video*.py         # Video models, storage, services, and pipeline tests
 ├── data/                      # Runtime SQLite databases (ignored by Git)
 ├── .env.example
+├── map-project.md             # Detailed module and runtime dependency map
 ├── pyproject.toml
 └── README.md
 ```

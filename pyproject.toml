@@ -12,7 +12,7 @@ dependencies = [
     "logfire[httpx]>=4.16.0,<5.0.0",
     "pydantic>=2.10.0,<3.0.0",
     "pydantic-ai-slim[duckduckgo,google,openrouter]>=2.22.0,<2.23.0",
-    # timed_compaction.py uses internal helpers from the Harness 0.15 series.
+    # memory/compaction.py uses internal helpers from the Harness 0.15 series.
     "pydantic-ai-harness>=0.15.0,<0.16.0",
     "python-dotenv>=1.0.0,<2.0.0",
 ]

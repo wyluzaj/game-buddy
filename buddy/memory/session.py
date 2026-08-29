@@ -6,23 +6,19 @@ import sqlite3
 
 from pydantic_ai_harness.memory import Memory
 
-from buddy.memory_index import (
+from buddy.config import MEMORY, STORAGE
+from buddy.memory.index import (
     MemoryDocument,
     MemoryDocumentType,
     index_memory_document,
 )
 
 
-SESSION_MEMORY_PREFIX = "main/sessions"
-MAX_SESSION_DOCUMENT_CHARS = 1_000_000
-MAX_SESSION_INDEX_SUMMARY_CHARS = 500
-
-
 def session_memory_path(conversation_id: int) -> str:
     """Return the stable Harness Memory path for one conversation report."""
     if conversation_id < 1:
         raise ValueError("A conversation ID must be positive.")
-    return f"{SESSION_MEMORY_PREFIX}/session-{conversation_id}.md"
+    return f"{STORAGE.session_memory_prefix}/session-{conversation_id}.md"
 
 
 def build_session_document(
@@ -70,7 +66,7 @@ async def persist_session_document(
         session_context=session_context,
         video_observations=video_observations,
     )
-    current = await memory.store.read(path, max_chars=MAX_SESSION_DOCUMENT_CHARS)
+    current = await memory.store.read(path, max_chars=MEMORY.session_document_chars)
     if current is None or current.truncated or current.content != content:
         await memory.store.write(
             path,
@@ -108,6 +104,6 @@ def _format_timestamp(value: datetime) -> str:
 def _index_summary(session_context: str) -> str:
     """Create bounded display metadata; the full body remains in FTS."""
     summary = re.sub(r"\s+", " ", session_context).strip()
-    if len(summary) <= MAX_SESSION_INDEX_SUMMARY_CHARS:
+    if len(summary) <= MEMORY.session_index_summary_chars:
         return summary
-    return summary[: MAX_SESSION_INDEX_SUMMARY_CHARS - 1].rstrip() + "…"
+    return summary[: MEMORY.session_index_summary_chars - 1].rstrip() + "…"

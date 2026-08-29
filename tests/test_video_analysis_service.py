@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from buddy.video_analysis_service import (
+from buddy.video.analysis_service import (
     VideoSegmentStateError,
     analyze_video_segment,
     register_and_analyze_video,
 )
-from buddy.video_analyzer import VideoProviderError
-from buddy.video_models import VideoOverview, VideoSegmentStatus
-from buddy.video_storage import (
+from buddy.video.analyzer import VideoProviderError
+from buddy.video.models import VideoOverview, VideoSegmentStatus
+from buddy.video.storage import (
     claim_video_segment_for_analysis,
     create_video_segment,
     get_video_reports,

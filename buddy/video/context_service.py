@@ -5,18 +5,18 @@ import sqlite3
 from pydantic import ValidationError
 from pydantic_ai import RunUsage
 
-from buddy.video_context_butler import (
+from buddy.video.context_butler import (
     VideoContextButler,
     build_video_context_prompt,
     validate_video_context_result,
 )
-from buddy.video_models import (
+from buddy.video.models import (
     VideoContextUpdate,
     VideoOverview,
     VideoReportMode,
     VideoSegment,
 )
-from buddy.video_storage import (
+from buddy.video.storage import (
     get_latest_video_context,
     get_video_context_update_for_report,
     get_video_report,

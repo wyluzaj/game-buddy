@@ -4,13 +4,13 @@ from dataclasses import dataclass
 import pytest
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
-from buddy.game_memory import ensure_game_document
-from buddy.game_memory_analysis import (
+from buddy.memory.game import ensure_game_document
+from buddy.memory.game_analysis import (
     GameMemoryAnalysisResult,
     GameProfileUpdate,
     update_game_profiles,
 )
-from buddy.long_term_memory import MEMORY_STORE_PATH
+from buddy.memory.long_term import MEMORY_STORE_PATH
 
 
 @dataclass

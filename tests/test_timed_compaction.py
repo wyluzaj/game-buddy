@@ -12,7 +12,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from buddy.timed_compaction import (
+from buddy.memory.compaction import (
     _SUMMARY_PREFIX,
     SummarizingCompactionTimed,
     _find_time_cutoff,

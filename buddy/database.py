@@ -2,8 +2,9 @@
 import sqlite3
 from pathlib import Path
 
-from buddy.memory_index import init_memory_index
-from buddy.video_storage import init_video_storage
+from buddy.config import STORAGE
+from buddy.memory.index import init_memory_index
+from buddy.video.storage import init_video_storage
 
 _CONVERSATION_COLUMNS: dict[str, str] = {
     "ended_at": "TIMESTAMP",
@@ -22,7 +23,7 @@ def _open_connection(db_path: str) -> sqlite3.Connection:
     return conn
 
 
-def init_db(db_path: str = "data/chatbot.db") -> sqlite3.Connection:
+def init_db(db_path: str = STORAGE.chat_database_path) -> sqlite3.Connection:
     """Initialize the database and return a connection."""
     conn = _open_connection(db_path)
 

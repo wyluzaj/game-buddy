@@ -28,6 +28,7 @@ from buddy.prompts import (
     SHORT_TERM_MEMORY_SUMMARIZER_INSTRUCTIONS,
     SHORT_TERM_MEMORY_SUMMARY_PROMPT,
 )
+from buddy.prompts import VIDEO_CONTEXT_MARKER
 
 # Harness does not expose the cutoff and tracing helpers through its public API.
 # This capability intentionally mirrors Harness SummarizingCompaction and therefore
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
 
 _SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
 _MEMORY_METADATA_PREFIX = 'pydantic-ai-harness.memory.v1:'
-_VIDEO_CONTEXT_PREFIX = '[game-buddy.video-context.v1]'
+_VIDEO_CONTEXT_PREFIX = VIDEO_CONTEXT_MARKER
 
 
 def _stringify_tool_value(value: Any) -> str:

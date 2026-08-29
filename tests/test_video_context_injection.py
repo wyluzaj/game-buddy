@@ -9,9 +9,9 @@ from pydantic_ai.messages import (
 )
 
 from buddy.database import create_conversation
-from buddy.video_context_injection import VIDEO_CONTEXT_MARKER, inject_video_context
-from buddy.video_models import VideoContextUpdate, VideoOverview, VideoReportMode
-from buddy.video_storage import (
+from buddy.video.context_injection import VIDEO_CONTEXT_MARKER, inject_video_context
+from buddy.video.models import VideoContextUpdate, VideoOverview, VideoReportMode
+from buddy.video.storage import (
     create_video_segment,
     get_latest_pending_video_context,
     get_video_context_update_for_report,

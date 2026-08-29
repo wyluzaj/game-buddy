@@ -11,15 +11,15 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
-from buddy.config import LONG_TERM_MEMORY_MODEL, MODEL_TIERS
+from buddy.config import MODEL_TIERS, MODELS
 from buddy.database import create_conversation, finish_conversation, save_messages
-from buddy.game_memory import game_memory_path
-from buddy.game_memory_analysis import (
+from buddy.memory.game import game_memory_path
+from buddy.memory.game_analysis import (
     GameMemoryAnalysisResult,
     GameProfileUpdate,
 )
-from buddy.long_term_memory import MEMORY_STORE_PATH
-from buddy.memory_analysis import (
+from buddy.memory.long_term import MEMORY_STORE_PATH
+from buddy.memory.analysis import (
     MemoryAnalysisResult,
     build_memory_analyzer,
     build_memory_analysis_prompt,
@@ -27,14 +27,14 @@ from buddy.memory_analysis import (
     update_long_term_memory,
     sanitize_global_memory_scope,
 )
-from buddy.memory_index import (
+from buddy.memory.index import (
     MemoryDocumentType,
     get_memory_document,
     search_memory_documents,
 )
-from buddy.session_memory import session_memory_path
-from buddy.video_models import VideoOverview, VideoReportMode
-from buddy.video_storage import (
+from buddy.memory.session import session_memory_path
+from buddy.video.models import VideoOverview, VideoReportMode
+from buddy.video.storage import (
     create_video_segment,
     save_video_context_update,
     save_video_report,
@@ -123,12 +123,12 @@ def test_memory_analyzer_uses_configured_long_term_fallback(monkeypatch):
     assert isinstance(analyzer.model, FallbackModel)
     used_names = [model.model_name for model in analyzer.model.models]
     assert used_names == [
-        LONG_TERM_MEMORY_MODEL.value.split(":", 1)[1]
+        MODELS.long_term_memory.value.split(":", 1)[1]
     ] + [
         model.value.split(":", 1)[1]
         for model, tier in MODEL_TIERS.items()
-        if tier == MODEL_TIERS[LONG_TERM_MEMORY_MODEL]
-        and model is not LONG_TERM_MEMORY_MODEL
+        if tier == MODEL_TIERS[MODELS.long_term_memory]
+        and model is not MODELS.long_term_memory
     ]
 
 

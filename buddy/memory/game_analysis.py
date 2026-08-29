@@ -10,9 +10,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai_harness.memory import Memory
 
-from buddy.config import LONG_TERM_MEMORY_MODEL, build_model
-from buddy.game_memory import MAX_GAME_DOCUMENT_CHARS
-from buddy.memory_index import (
+from buddy.config import MEMORY, MODELS, build_model
+from buddy.memory.index import (
     MemoryDocument,
     MemoryDocumentType,
     index_memory_document,
@@ -21,10 +20,6 @@ from buddy.prompts import (
     GAME_MEMORY_ANALYSIS_PROMPT,
     GAME_MEMORY_ANALYZER_INSTRUCTIONS,
 )
-
-
-MAX_GAME_PROFILE_UPDATES = 8
-MAX_GAME_INDEX_SUMMARY_CHARS = 500
 
 
 class GameProfileUpdate(BaseModel):
@@ -40,7 +35,7 @@ class GameMemoryAnalysisResult(BaseModel):
 
     updates: list[GameProfileUpdate] = Field(
         default_factory=list,
-        max_length=MAX_GAME_PROFILE_UPDATES,
+        max_length=MEMORY.game_profile_updates,
     )
 
 
@@ -70,7 +65,7 @@ def build_game_memory_analyzer(
     model: str | PydanticModel | None = None,
 ) -> Agent[None, GameMemoryAnalysisResult]:
     """Build the dedicated game curator using long-term-memory fallback config."""
-    analyzer_model = model if model is not None else build_model(LONG_TERM_MEMORY_MODEL)
+    analyzer_model = model if model is not None else build_model(MODELS.long_term_memory)
     return Agent[None, GameMemoryAnalysisResult](
         model=analyzer_model,
         deps_type=type(None),
@@ -143,7 +138,7 @@ async def _load_current_profiles(
     for document in game_documents:
         memory_file = await memory.store.read(
             document.path,
-            max_chars=MAX_GAME_DOCUMENT_CHARS,
+            max_chars=MEMORY.game_document_chars,
         )
         if memory_file is None:
             raise RuntimeError(f"Game profile {document.path!r} is missing.")
@@ -202,6 +197,6 @@ def _validate_updates(
 def _index_summary(content: str) -> str:
     """Create bounded display metadata while indexing the complete profile body."""
     summary = re.sub(r"\s+", " ", content).strip()
-    if len(summary) <= MAX_GAME_INDEX_SUMMARY_CHARS:
+    if len(summary) <= MEMORY.game_index_summary_chars:
         return summary
-    return summary[: MAX_GAME_INDEX_SUMMARY_CHARS - 1].rstrip() + "…"
+    return summary[: MEMORY.game_index_summary_chars - 1].rstrip() + "…"

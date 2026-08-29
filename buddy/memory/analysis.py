@@ -10,25 +10,25 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai_harness.memory import Memory
 
-from buddy.config import LONG_TERM_MEMORY_MODEL, build_model
+from buddy.config import MEMORY, MODELS, build_model
 from buddy.database import (
     get_conversations_pending_memory,
     get_messages,
     mark_memory_analyzed,
 )
-from buddy.long_term_memory import MEMORY_STORE_PATH
+from buddy.memory.long_term import MEMORY_STORE_PATH
 from buddy.prompts import (
     LONG_TERM_MEMORY_ANALYSIS_PROMPT,
     LONG_TERM_MEMORY_ANALYZER_INSTRUCTIONS,
 )
-from buddy.game_memory import link_session_to_games
-from buddy.game_memory_analysis import GameMemoryAnalyzer, update_game_profiles
-from buddy.session_memory import (
+from buddy.memory.game import link_session_to_games
+from buddy.memory.game_analysis import GameMemoryAnalyzer, update_game_profiles
+from buddy.memory.session import (
     parse_database_timestamp,
     persist_session_document,
 )
-from buddy.timed_compaction import format_messages
-from buddy.video_session_memory import build_session_video_observations
+from buddy.memory.compaction import format_messages
+from buddy.video.session_memory import build_session_video_observations
 
 
 class MemoryAnalysisResult(BaseModel):
@@ -83,7 +83,7 @@ def build_memory_analyzer(
     model: str | PydanticModel | None = None,
 ) -> Agent[None, MemoryAnalysisResult]:
     """Build the dedicated agent that curates completed session memory."""
-    analyzer_model = model if model is not None else build_model(LONG_TERM_MEMORY_MODEL)
+    analyzer_model = model if model is not None else build_model(MODELS.long_term_memory)
     analyzer = Agent[None, MemoryAnalysisResult](
         model=analyzer_model,
         deps_type=type(None),
@@ -175,7 +175,10 @@ async def _apply_long_term_memory(
     ):
         return AppliedMemoryAnalysis(changed=False, games_with_user_state=[])
 
-    memory_file = await memory.store.read(MEMORY_STORE_PATH, max_chars=100_000)
+    memory_file = await memory.store.read(
+        MEMORY_STORE_PATH,
+        max_chars=MEMORY.global_document_chars,
+    )
     current_memory = memory_file.content if memory_file is not None else ""
     prompt = build_memory_analysis_prompt(
         current_memory,

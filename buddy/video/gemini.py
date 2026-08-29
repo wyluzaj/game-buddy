@@ -9,34 +9,19 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
-from buddy.config import Model, VIDEO_OVERVIEW_MODEL
+from buddy.config import MODELS, SUPPORTED_VIDEO_MIME_TYPES, VIDEO, Model
 from buddy.prompts import (
     VIDEO_DETAIL_ANALYZER_INSTRUCTIONS,
     VIDEO_DETAIL_REQUEST,
     VIDEO_OVERVIEW_ANALYZER_INSTRUCTIONS,
     VIDEO_OVERVIEW_REQUEST,
 )
-from buddy.video_analyzer import (
+from buddy.video.analyzer import (
     InvalidVideoFileError,
     VideoProviderError,
 )
-from buddy.video_models import VideoDetailAnalysis, VideoOverview
+from buddy.video.models import VideoDetailAnalysis, VideoOverview
 
-
-DEFAULT_FILE_PROCESSING_TIMEOUT_SECONDS = 180.0
-DEFAULT_FILE_POLL_INTERVAL_SECONDS = 2.0
-
-SUPPORTED_VIDEO_MIME_TYPES: dict[str, str] = {
-    ".mp4": "video/mp4",
-    ".mpeg": "video/mpeg",
-    ".mpg": "video/mpeg",
-    ".mov": "video/mov",
-    ".avi": "video/avi",
-    ".flv": "video/x-flv",
-    ".webm": "video/webm",
-    ".wmv": "video/wmv",
-    ".3gp": "video/3gpp",
-}
 
 StructuredVideoResult = TypeVar("StructuredVideoResult", bound=BaseModel)
 
@@ -81,10 +66,10 @@ class GeminiVideoAnalyzer:
     def __init__(
         self,
         *,
-        model: Model | str = VIDEO_OVERVIEW_MODEL,
+        model: Model | str = MODELS.video_overview,
         client: _GenAIClient | None = None,
-        processing_timeout_seconds: float = DEFAULT_FILE_PROCESSING_TIMEOUT_SECONDS,
-        poll_interval_seconds: float = DEFAULT_FILE_POLL_INTERVAL_SECONDS,
+        processing_timeout_seconds: float = VIDEO.processing_timeout_seconds,
+        poll_interval_seconds: float = VIDEO.poll_interval_seconds,
     ) -> None:
         if processing_timeout_seconds <= 0:
             raise ValueError("Video processing timeout must be positive.")

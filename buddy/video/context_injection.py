@@ -5,11 +5,8 @@ from dataclasses import replace
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 
-from buddy.prompts import VIDEO_CONTEXT_INJECTION_PROMPT
-from buddy.video_models import VideoContextUpdate
-
-
-VIDEO_CONTEXT_MARKER = "[game-buddy.video-context.v1]"
+from buddy.prompts import VIDEO_CONTEXT_INJECTION_PROMPT, VIDEO_CONTEXT_MARKER
+from buddy.video.models import VideoContextUpdate
 
 
 def inject_video_context(
