@@ -102,6 +102,7 @@ class VideoSettings:
     max_overview_events: int = 100
     max_visible_text_observations: int = 100
     max_uncertainties: int = 50
+    hash_chunk_bytes: int = 1024 * 1024
 
 
 MODELS = ModelSettings()

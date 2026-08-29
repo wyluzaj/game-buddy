@@ -115,6 +115,7 @@ class VideoSegment:
     id: int
     conversation_id: int | None
     file_path: Path
+    recording_key: str
     started_at: datetime
     ended_at: datetime
     duration_seconds: float
@@ -137,6 +138,7 @@ class VideoReport:
     segment_id: int
     mode: VideoReportMode
     question: str | None
+    request_key: str | None
     provider: str
     model_name: str
     content: dict[str, object]

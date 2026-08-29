@@ -6,6 +6,7 @@ from pydantic_ai import RunUsage
 from pydantic_ai.models.fallback import FallbackModel
 
 from buddy.config import MODEL_TIERS, MODELS
+from buddy.database import create_conversation
 from buddy.video.context_butler import (
     VideoContextButlerResult,
     build_video_context_butler,
@@ -13,6 +14,7 @@ from buddy.video.context_butler import (
 from buddy.video.context_service import process_video_report_context
 from buddy.video.models import VideoEvent, VideoOverview, VideoReportMode
 from buddy.video.storage import (
+    claim_video_segment_for_analysis,
     create_video_segment,
     get_latest_video_context,
     save_video_report,
@@ -64,6 +66,7 @@ def _overview_report(
         started_at=started_at,
         ended_at=started_at + timedelta(minutes=2),
     )
+    assert claim_video_segment_for_analysis(db, segment.id) is not None
     overview = VideoOverview(
         summary=summary,
         events=[
@@ -103,6 +106,7 @@ def test_video_context_butler_uses_its_explicit_configured_model(monkeypatch):
 
 def test_context_is_a_source_validated_replacement_state(db, tmp_path):
     """The next prompt receives prior state and persists one newer snapshot."""
+    conversation_id = create_conversation(db)
     first_segment, first_report = _overview_report(
         db,
         tmp_path,
@@ -110,6 +114,7 @@ def test_context_is_a_source_validated_replacement_state(db, tmp_path):
         summary="Znaleziono zamknięte drzwi.",
         event_start=12,
         event_end=18,
+        conversation_id=conversation_id,
     )
     first_source = f"{first_segment.source_uri}?t=12-18"
     first_butler = StubVideoContextButler(
@@ -138,6 +143,7 @@ def test_context_is_a_source_validated_replacement_state(db, tmp_path):
         summary="Znaleziono klucz przy schodach.",
         event_start=30,
         event_end=35,
+        conversation_id=conversation_id,
     )
     second_source = f"{second_segment.source_uri}?t=30-35"
     second_butler = StubVideoContextButler(
@@ -162,7 +168,7 @@ def test_context_is_a_source_validated_replacement_state(db, tmp_path):
     assert "zamknięte drzwi" in second_butler.prompts[0]
     assert first_source in second_butler.prompts[0]
     assert second.sources == [first_source, second_source]
-    assert get_latest_video_context(db, conversation_id=None) == second
+    assert get_latest_video_context(db, conversation_id=conversation_id) == second
 
 
 def test_no_change_is_persisted_once_without_polluting_context(db, tmp_path):
@@ -193,6 +199,43 @@ def test_no_change_is_persisted_once_without_polluting_context(db, tmp_path):
     assert first.context == ""
     assert first.sources == []
     assert len(butler.prompts) == 1
+
+
+def test_unassigned_clips_do_not_share_previous_context(db, tmp_path):
+    first_segment, first_report = _overview_report(
+        db,
+        tmp_path,
+        name="unassigned-first",
+        summary="Pierwszy niezależny klip.",
+        event_start=1,
+        event_end=2,
+    )
+    first_butler = StubVideoContextButler(
+        [
+            VideoContextButlerResult(
+                changed=True,
+                context="Stan pierwszego klipu.",
+                sources=[f"{first_segment.source_uri}?t=1-2"],
+            )
+        ]
+    )
+    asyncio.run(process_video_report_context(db, first_butler, first_report.id))
+
+    _, second_report = _overview_report(
+        db,
+        tmp_path,
+        name="unassigned-second",
+        summary="Drugi niezależny klip.",
+        event_start=3,
+        event_end=4,
+    )
+    second_butler = StubVideoContextButler(
+        [VideoContextButlerResult(changed=False)]
+    )
+    asyncio.run(process_video_report_context(db, second_butler, second_report.id))
+
+    assert "Stan pierwszego klipu" not in second_butler.prompts[0]
+    assert '"context": ""' in second_butler.prompts[0]
 
 
 def test_invented_video_source_is_rejected(db, tmp_path):
@@ -226,6 +269,7 @@ def test_invented_video_source_is_rejected(db, tmp_path):
 
 def test_late_older_report_cannot_replace_newer_video_context(db, tmp_path):
     """Out-of-order provider completion cannot move observed state backwards."""
+    conversation_id = create_conversation(db)
     newer_segment, newer_report = _overview_report(
         db,
         tmp_path,
@@ -234,6 +278,7 @@ def test_late_older_report_cannot_replace_newer_video_context(db, tmp_path):
         event_start=20,
         event_end=25,
         start_offset_minutes=2,
+        conversation_id=conversation_id,
     )
     newer_butler = StubVideoContextButler(
         [
@@ -253,6 +298,7 @@ def test_late_older_report_cannot_replace_newer_video_context(db, tmp_path):
         summary="Użytkowniczka była jeszcze przed mostem.",
         event_start=10,
         event_end=15,
+        conversation_id=conversation_id,
     )
     older_butler = StubVideoContextButler([])
 

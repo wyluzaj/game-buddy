@@ -50,9 +50,11 @@ buddy.video.cli
   -> video.gemini.GeminiVideoAnalyzer
   -> video.pipeline.process_video_file
        -> video.analysis_service.register_and_analyze_video
+            -> SHA-256 recording key from bytes, UTC times, and conversation ID
             -> video.storage.create_video_segment
             -> video.storage.claim_video_segment_for_analysis
             -> GeminiVideoAnalyzer.analyze_overview
+            -> validate every timestamp against segment duration
             -> video.storage.save_video_report(mode=overview)
        -> video.context_service.process_video_report_context
             -> video.context_butler.build_video_context_prompt
@@ -73,6 +75,8 @@ video_context_updates
 
 The replacement message stays separate from user statements. Timed compaction preserves
 only its newest version and never folds stale screen state into the rolling chat summary.
+Unassigned clips (`conversation_id=None`) never receive a previous replacement state and
+therefore cannot leak context between unrelated manual analyses.
 
 ### Detailed video analysis
 
@@ -82,10 +86,11 @@ user asks about a visible or audible detail
   -> analyze_video_detail tool
        -> video.detail_service.parse_video_source
        -> validate segment ownership and timestamp range
-       -> reuse an identical cached detail report when available
+       -> build a canonical request key and acquire its in-process lock
+       -> reuse an identical indexed detail report when available
        -> GeminiVideoAnalyzer.analyze_detail
        -> validate evidence timestamps
-       -> video.storage.save_video_report(mode=detail)
+       -> video.storage.save_video_report(mode=detail, request_key=...)
   -> compact answer + validated video:// sources return to the main agent
 ```
 
@@ -141,10 +146,14 @@ conversations
   1 -> many video_segments
 
 video_segments
+  recording_key = SHA-256(bytes + capture metadata)
   1 -> many video_reports
 
 video_reports (overview)
   1 -> 0..1 video_context_updates
+
+video_reports (detail)
+  unique request_key -> one cached answer
 
 memory_documents
   session --belongs_to_game--> game
@@ -158,6 +167,11 @@ Main responsibilities:
 - session-to-game relations;
 - normalized paths to local video files;
 - overview/detail reports and compact context updates.
+
+The database uses `PRAGMA user_version`. Schema version 2 migrates the original
+path-unique video tables to recording keys, adds indexed detail request keys, and preserves
+existing segment/report/context IDs. Storage reads validate report JSON and context-source
+JSON before returning domain objects.
 
 ### `data/memory.db`
 
@@ -202,8 +216,8 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/video/models.py` | Video enums, dataclasses, and Pydantic result models | Shared contract for all video modules |
 | `buddy/video/analyzer.py` | Provider-neutral overview/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
 | `buddy/video/gemini.py` | Gemini upload, polling, structured generation, parsing, and cleanup | Native provider adapter for overview and detail modes |
-| `buddy/video/storage.py` | Video schema and persistence operations | Repository used by every video service and the chat loop |
-| `buddy/video/analysis_service.py` | Atomic claim, overview persistence, retry, and reuse lifecycle | Connects `VideoAnalyzer` to `video.storage` |
+| `buddy/video/storage.py` | Versioned video schema, validated persistence, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
+| `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, timeline validation, retry, and reuse | Connects `VideoAnalyzer` to `video.storage` |
 | `buddy/video/context_butler.py` | Replacement-state prompt construction and source validation | Used by `video.context_service.py` |
 | `buddy/video/context_service.py` | Idempotent overview-to-context reduction | Connects storage to Video Context Butler |
 | `buddy/video/pipeline.py` | End-to-end overview and context-update orchestration | Used by the manual CLI and future capture worker |
@@ -221,18 +235,18 @@ and are deleted after generation whenever cleanup succeeds.
 | `tests/test_config.py` | Model roles, tiers, and fallback selection |
 | `tests/test_timed_compaction.py` | Timed compaction, incremental summaries, and history filtering |
 | `tests/test_long_term_memory.py` | Harness store, injection-only behavior, and agent capabilities |
-| `tests/test_database.py` | Conversations, raw messages, completion, and migrations |
+| `tests/test_database.py` | Conversations, raw messages, completion, schema versioning, and legacy migrations |
 | `tests/test_memory_index.py` | FTS5 retrieval, relations, path validation, and dates |
 | `tests/test_memory_recall.py` | Retrieval fallback, Context Butler, and source validation |
 | `tests/test_memory_analysis.py` | Session consolidation, retry, games, and video evidence |
 | `tests/test_game_memory_analysis.py` | Allowed-profile and evidence isolation |
 | `tests/test_video_models.py` | Video domain validation |
 | `tests/test_gemini_video_analyzer.py` | SDK adapter, structured modes, provider errors, and cleanup |
-| `tests/test_video_storage.py` | Segment/report/context persistence and lifecycle |
-| `tests/test_video_analysis_service.py` | Atomic claim, failure retry, and overview reuse |
+| `tests/test_video_storage.py` | State machine, validated persistence, corruption handling, and lifecycle |
+| `tests/test_video_analysis_service.py` | Content identity, timeline bounds, atomic claim, retry, and overview reuse |
 | `tests/test_video_context_service.py` | Replacement state, no-change decisions, sources, and ordering |
 | `tests/test_video_context_injection.py` | Context replacement, acknowledgement, and session isolation |
-| `tests/test_video_detail_service.py` | Safe URIs, time ranges, evidence validation, and detail cache |
+| `tests/test_video_detail_service.py` | Safe URIs, time ranges, evidence validation, and concurrent detail cache |
 | `tests/test_video_pipeline.py` | Overview-to-context pipeline and partial-failure recovery |
 
 ## Current scope boundary

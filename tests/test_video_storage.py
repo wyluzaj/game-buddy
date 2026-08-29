@@ -8,8 +8,11 @@ from buddy.video.models import (
     VideoSegmentStatus,
 )
 from buddy.video.storage import (
+    VideoStorageDataError,
+    claim_video_segment_for_analysis,
     create_video_segment,
     get_video_reports,
+    get_video_report,
     get_video_segment,
     save_video_report,
     update_video_segment_status,
@@ -83,6 +86,15 @@ def test_segment_rejects_ambiguous_or_inverted_timestamps(db):
 def test_detail_report_requires_a_question_and_can_be_filtered(db):
     """On-demand reports retain the question that explains why they exist."""
     segment = _recorded_segment(db)
+    assert claim_video_segment_for_analysis(db, segment.id) is not None
+    save_video_report(
+        db,
+        segment_id=segment.id,
+        mode=VideoReportMode.OVERVIEW,
+        provider="google",
+        model_name="gemini-3.1-flash-lite",
+        content={"summary": "Overview before detail."},
+    )
 
     with pytest.raises(ValueError, match="requires its question"):
         save_video_report(
@@ -115,6 +127,7 @@ def test_detail_report_requires_a_question_and_can_be_filtered(db):
 def test_deleting_a_segment_cascades_to_its_reports(db):
     """Removing video metadata cannot leave orphaned analysis reports."""
     segment = _recorded_segment(db)
+    assert claim_video_segment_for_analysis(db, segment.id) is not None
     save_video_report(
         db,
         segment_id=segment.id,
@@ -132,3 +145,60 @@ def test_deleting_a_segment_cascades_to_its_reports(db):
         (segment.id,),
     ).fetchone()["count"]
     assert count == 0
+
+
+def test_invalid_segment_state_transitions_are_rejected(db):
+    segment = _recorded_segment(db)
+
+    with pytest.raises(ValueError, match="pending -> completed"):
+        update_video_segment_status(
+            db,
+            segment.id,
+            VideoSegmentStatus.COMPLETED,
+        )
+    with pytest.raises(ValueError, match="requires a processing segment"):
+        save_video_report(
+            db,
+            segment_id=segment.id,
+            mode=VideoReportMode.OVERVIEW,
+            provider="stub",
+            model_name="stub",
+            content={"summary": "Invalid direct completion."},
+        )
+
+    assert claim_video_segment_for_analysis(db, segment.id) is not None
+    save_video_report(
+        db,
+        segment_id=segment.id,
+        mode=VideoReportMode.OVERVIEW,
+        provider="stub",
+        model_name="stub",
+        content={"summary": "Valid completion."},
+    )
+    with pytest.raises(ValueError, match="completed -> processing"):
+        update_video_segment_status(
+            db,
+            segment.id,
+            VideoSegmentStatus.PROCESSING,
+        )
+
+
+def test_corrupt_report_json_raises_a_storage_boundary_error(db):
+    segment = _recorded_segment(db)
+    assert claim_video_segment_for_analysis(db, segment.id) is not None
+    report = save_video_report(
+        db,
+        segment_id=segment.id,
+        mode=VideoReportMode.OVERVIEW,
+        provider="stub",
+        model_name="stub",
+        content={"summary": "Valid before corruption."},
+    )
+    db.execute(
+        "UPDATE video_reports SET report_json = ? WHERE id = ?",
+        ("not-json", report.id),
+    )
+    db.commit()
+
+    with pytest.raises(VideoStorageDataError, match="Stored video report"):
+        get_video_report(db, report.id)

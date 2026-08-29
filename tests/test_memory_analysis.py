@@ -35,6 +35,7 @@ from buddy.memory.index import (
 from buddy.memory.session import session_memory_path
 from buddy.video.models import VideoOverview, VideoReportMode
 from buddy.video.storage import (
+    claim_video_segment_for_analysis,
     create_video_segment,
     save_video_context_update,
     save_video_report,
@@ -455,6 +456,7 @@ def test_video_observations_reach_session_and_game_memory_only(db, tmp_path):
         ended_at=started_at + timedelta(minutes=2),
         conversation_id=conversation_id,
     )
+    assert claim_video_segment_for_analysis(db, segment.id) is not None
     video_report = save_video_report(
         db,
         segment_id=segment.id,

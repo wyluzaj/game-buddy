@@ -11,6 +11,7 @@ _CONVERSATION_COLUMNS: dict[str, str] = {
     "compacted_history": "TEXT",
     "memory_analyzed_at": "TIMESTAMP",
 }
+LATEST_SCHEMA_VERSION = 2
 
 
 def _open_connection(db_path: str) -> sqlite3.Connection:
@@ -62,6 +63,7 @@ def init_db(db_path: str = STORAGE.chat_database_path) -> sqlite3.Connection:
 
     init_memory_index(conn)
     init_video_storage(conn)
+    conn.execute(f"PRAGMA user_version = {LATEST_SCHEMA_VERSION}")
     conn.commit()
     return conn
 

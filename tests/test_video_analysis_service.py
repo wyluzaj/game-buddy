@@ -10,7 +10,12 @@ from buddy.video.analysis_service import (
     register_and_analyze_video,
 )
 from buddy.video.analyzer import VideoProviderError
-from buddy.video.models import VideoOverview, VideoSegmentStatus
+from buddy.video.models import (
+    VideoEvent,
+    VideoOverview,
+    VideoSegmentStatus,
+    VisibleTextObservation,
+)
 from buddy.video.storage import (
     claim_video_segment_for_analysis,
     create_video_segment,
@@ -155,3 +160,79 @@ def test_registering_the_same_file_twice_reuses_segment_and_report(db, tmp_path)
     assert second.segment.id == first.segment.id
     assert second.reused_existing_report is True
     assert analyzer.calls == [video_path]
+
+
+def test_overwritten_file_path_creates_a_new_recording(db, tmp_path):
+    video_path = tmp_path / "reused-name.mp4"
+    started_at = datetime(2026, 8, 29, 18, 0, tzinfo=timezone.utc)
+    ended_at = started_at + timedelta(minutes=2)
+    video_path.write_bytes(b"first recording")
+    analyzer = StubVideoAnalyzer(
+        [
+            VideoOverview(summary="Pierwsze nagranie."),
+            VideoOverview(summary="Drugie nagranie."),
+        ]
+    )
+
+    first = asyncio.run(
+        register_and_analyze_video(
+            db,
+            analyzer,
+            file_path=video_path,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+    )
+    video_path.write_bytes(b"different second recording")
+    second = asyncio.run(
+        register_and_analyze_video(
+            db,
+            analyzer,
+            file_path=video_path,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+    )
+
+    assert first.segment.id != second.segment.id
+    assert first.segment.recording_key != second.segment.recording_key
+    assert second.overview.summary == "Drugie nagranie."
+    assert db.execute("SELECT COUNT(*) FROM video_segments").fetchone()[0] == 2
+    assert len(analyzer.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "overview",
+    [
+        VideoOverview(
+            summary="Event poza klipem.",
+            events=[
+                VideoEvent(
+                    start_seconds=119,
+                    end_seconds=121,
+                    description="Za późno.",
+                )
+            ],
+        ),
+        VideoOverview(
+            summary="Tekst poza klipem.",
+            visible_text=[
+                VisibleTextObservation(timestamp_seconds=121, text="Za późno")
+            ],
+        ),
+    ],
+)
+def test_overview_timestamps_cannot_exceed_segment_duration(
+    db,
+    tmp_path,
+    overview,
+):
+    segment = _segment(db, tmp_path)
+    analyzer = StubVideoAnalyzer([overview])
+
+    with pytest.raises(ValueError, match="exceeds the segment duration"):
+        asyncio.run(analyze_video_segment(db, analyzer, segment.id))
+
+    failed = get_video_segment(db, segment.id)
+    assert failed is not None
+    assert failed.status is VideoSegmentStatus.FAILED

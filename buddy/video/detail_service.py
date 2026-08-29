@@ -1,6 +1,8 @@
 """Secure, idempotent detailed analysis of application-owned video sources."""
 
+import asyncio
 from dataclasses import dataclass
+from hashlib import sha256
 import re
 import sqlite3
 
@@ -16,7 +18,7 @@ from buddy.video.models import (
     VideoSegmentStatus,
 )
 from buddy.video.storage import (
-    get_video_reports,
+    get_video_report_by_request_key,
     get_video_segment,
     save_video_report,
 )
@@ -26,6 +28,7 @@ _VIDEO_SOURCE_PATTERN = re.compile(
     r"^video://segment/(?P<segment_id>[1-9]\d*)"
     r"(?:\?t=(?P<start>\d+(?:\.\d+)?)-(?P<end>\d+(?:\.\d+)?))?$"
 )
+_DETAIL_REQUEST_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 class VideoDetailStateError(RuntimeError):
@@ -66,35 +69,44 @@ async def analyze_video_detail_source(
             "A video segment needs a completed overview before detailed analysis."
         )
 
-    existing = _find_existing_detail(
-        conn,
-        segment_id=segment.id,
-        question=normalized_question,
-        source_uri=parsed.canonical_uri,
+    request_key = _detail_request_key(
+        segment.id,
+        parsed.canonical_uri,
+        normalized_question,
     )
-    if existing is not None:
-        return _answer_from_report(existing, reused=True)
+    lock = _DETAIL_REQUEST_LOCKS.setdefault(request_key, asyncio.Lock())
+    async with lock:
+        existing = get_video_report_by_request_key(conn, request_key)
+        if existing is not None:
+            return _answer_from_report(existing, reused=True)
 
-    analysis = await analyzer.analyze_detail(
-        segment.file_path,
-        question=normalized_question,
-        start_seconds=parsed.start_seconds,
-        end_seconds=parsed.end_seconds,
-    )
-    sources = _validate_and_build_sources(analysis, parsed)
-    content = analysis.model_dump(mode="json")
-    content["requested_source"] = parsed.canonical_uri
-    content["sources"] = sources
-    report = save_video_report(
-        conn,
-        segment_id=segment.id,
-        mode=VideoReportMode.DETAIL,
-        question=normalized_question,
-        provider=analyzer.provider,
-        model_name=analyzer.model_name,
-        content=content,
-    )
-    return _answer_from_report(report, reused=False)
+        analysis = await analyzer.analyze_detail(
+            segment.file_path,
+            question=normalized_question,
+            start_seconds=parsed.start_seconds,
+            end_seconds=parsed.end_seconds,
+        )
+        sources = _validate_and_build_sources(analysis, parsed)
+        content = analysis.model_dump(mode="json")
+        content["requested_source"] = parsed.canonical_uri
+        content["sources"] = sources
+        try:
+            report = save_video_report(
+                conn,
+                segment_id=segment.id,
+                mode=VideoReportMode.DETAIL,
+                question=normalized_question,
+                request_key=request_key,
+                provider=analyzer.provider,
+                model_name=analyzer.model_name,
+                content=content,
+            )
+        except sqlite3.IntegrityError:
+            report = get_video_report_by_request_key(conn, request_key)
+            if report is None:
+                raise
+            return _answer_from_report(report, reused=True)
+        return _answer_from_report(report, reused=False)
 
 
 def parse_video_source(
@@ -129,24 +141,13 @@ def parse_video_source(
     )
 
 
-def _find_existing_detail(
-    conn: sqlite3.Connection,
-    *,
+def _detail_request_key(
     segment_id: int,
-    question: str,
     source_uri: str,
-) -> VideoReport | None:
-    for report in get_video_reports(
-        conn,
-        segment_id,
-        mode=VideoReportMode.DETAIL,
-    ):
-        if (
-            report.question == question
-            and report.content.get("requested_source") == source_uri
-        ):
-            return report
-    return None
+    question: str,
+) -> str:
+    raw = f"{segment_id}\0{source_uri}\0{question.casefold()}"
+    return sha256(raw.encode()).hexdigest()
 
 
 def _validate_and_build_sources(
