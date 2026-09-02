@@ -222,7 +222,7 @@ def test_overwritten_file_path_creates_a_new_recording(db, tmp_path):
         ),
     ],
 )
-def test_overview_timestamps_cannot_exceed_segment_duration(
+def test_overview_timestamps_outside_segment_are_dropped(
     db,
     tmp_path,
     overview,
@@ -230,9 +230,9 @@ def test_overview_timestamps_cannot_exceed_segment_duration(
     segment = _segment(db, tmp_path)
     analyzer = StubVideoAnalyzer([overview])
 
-    with pytest.raises(ValueError, match="exceeds the segment duration"):
-        asyncio.run(analyze_video_segment(db, analyzer, segment.id))
+    outcome = asyncio.run(analyze_video_segment(db, analyzer, segment.id))
 
-    failed = get_video_segment(db, segment.id)
-    assert failed is not None
-    assert failed.status is VideoSegmentStatus.FAILED
+    assert outcome.segment.status is VideoSegmentStatus.COMPLETED
+    assert outcome.overview.events == []
+    assert outcome.overview.visible_text == []
+    assert "długość klipu: 1" in outcome.overview.uncertainties[-1]

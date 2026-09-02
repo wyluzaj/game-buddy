@@ -104,7 +104,7 @@ async def analyze_video_segment(
 
     try:
         overview = await analyzer.analyze_overview(claimed.file_path)
-        _validate_overview_timeline(overview, claimed.duration_seconds)
+        overview = _sanitize_overview_timeline(overview, claimed.duration_seconds)
         report = save_video_report(
             conn,
             segment_id=claimed.id,
@@ -194,16 +194,35 @@ def _recording_key(
     return digest.hexdigest()
 
 
-def _validate_overview_timeline(
+def _sanitize_overview_timeline(
     overview: VideoOverview,
     duration_seconds: float,
-) -> None:
-    """Reject provider timestamps outside the persisted clip timeline."""
-    for event in overview.events:
-        if event.end_seconds > duration_seconds + 0.001:
-            raise ValueError("Video overview event exceeds the segment duration.")
-    for observation in overview.visible_text:
-        if observation.timestamp_seconds > duration_seconds + 0.001:
-            raise ValueError(
-                "Video overview text observation exceeds the segment duration."
-            )
+) -> VideoOverview:
+    """Drop unusable provider timestamps without losing the complete overview."""
+    maximum = duration_seconds + 0.001
+    events = [event for event in overview.events if event.end_seconds <= maximum]
+    visible_text = [
+        observation
+        for observation in overview.visible_text
+        if observation.timestamp_seconds <= maximum
+    ]
+    removed = len(overview.events) - len(events) + len(overview.visible_text) - len(
+        visible_text
+    )
+    if removed == 0:
+        return overview
+
+    note = (
+        "Liczba pominiętych obserwacji z timestampami wykraczającymi poza "
+        f"długość klipu: {removed} (czas klipu: {duration_seconds:.3f} s)."
+    )
+    uncertainties = [*overview.uncertainties, note]
+    if len(uncertainties) > VIDEO.max_uncertainties:
+        uncertainties = uncertainties[-VIDEO.max_uncertainties :]
+    return overview.model_copy(
+        update={
+            "events": events,
+            "visible_text": visible_text,
+            "uncertainties": uncertainties,
+        }
+    )

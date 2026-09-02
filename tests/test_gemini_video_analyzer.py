@@ -9,7 +9,7 @@ from buddy.video.analyzer import (
     VideoAnalyzer,
     VideoProviderError,
 )
-from buddy.video.gemini import GeminiVideoAnalyzer
+from buddy.video.gemini import GeminiVideoAnalyzer, _gemini_json_schema
 from buddy.video.models import (
     VideoDetailAnalysis,
     VideoDetailObservation,
@@ -134,7 +134,8 @@ def test_gemini_analyzer_uploads_waits_parses_and_cleans_up(tmp_path):
     assert models.model_name == "gemini-3.1-flash-lite"
     assert models.config is not None
     assert models.config.response_mime_type == "application/json"
-    assert models.config.response_schema is VideoOverview
+    assert models.config.response_schema is None
+    assert models.config.response_json_schema == _gemini_json_schema(VideoOverview)
 
 
 def test_gemini_analyzer_normalizes_provider_failure_and_still_cleans_up(tmp_path):
@@ -179,11 +180,40 @@ def test_gemini_analyzer_creates_question_specific_detail(tmp_path):
 
     assert result == detail
     assert models.config is not None
-    assert models.config.response_schema is VideoDetailAnalysis
+    assert models.config.response_schema is None
+    assert models.config.response_json_schema == _gemini_json_schema(
+        VideoDetailAnalysis
+    )
     assert models.contents is not None
     assert "Co było napisane" in str(models.contents[0])
     assert "10.000 do 20.000" in str(models.contents[0])
     assert files.deleted_names == ["files/test-video"]
+
+
+def test_gemini_schema_keeps_structure_and_drops_unsupported_constraints():
+    schema = _gemini_json_schema(VideoOverview)
+
+    serialized = str(schema)
+    assert schema["type"] == "object"
+    assert schema["properties"]["events"]["items"]["type"] == "object"
+    assert schema["properties"]["events"]["items"]["properties"][
+        "importance"
+    ]["enum"] == ["low", "medium", "high"]
+    assert schema["properties"]["possible_game"] == {"type": "string"}
+    assert schema["properties"]["confidence"] == {"type": "number"}
+    assert "description" not in schema
+    assert "description" not in schema["properties"]["events"]["items"]
+    for unsupported in (
+        "$defs",
+        "$ref",
+        "anyOf",
+        "default",
+        "title",
+        "minimum",
+        "maximum",
+        "maxItems",
+    ):
+        assert unsupported not in serialized
 
 
 def test_gemini_analyzer_rejects_invalid_local_file_before_upload(tmp_path):

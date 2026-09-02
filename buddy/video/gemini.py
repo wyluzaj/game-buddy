@@ -3,7 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import Protocol, TypeVar, cast
+from typing import Any, Protocol, TypeVar, cast
 
 from google import genai
 from google.genai import types
@@ -132,19 +132,25 @@ class GeminiVideoAnalyzer:
         """Own the shared upload, processing, generation, and cleanup lifecycle."""
         path, mime_type = _validate_video_file(video_path)
         uploaded: types.File | None = None
+        stage = "upload"
         try:
             uploaded = await self._client.aio.files.upload(
                 file=path,
                 config=types.UploadFileConfig(mime_type=mime_type),
             )
+            stage = "processing"
             uploaded = await self._wait_until_active(uploaded)
+            stage = "generation"
             response = await self._client.aio.models.generate_content(
                 model=self._model_name,
                 contents=[request, uploaded],
                 config=types.GenerateContentConfig(
                     system_instruction=instructions,
                     response_mime_type="application/json",
-                    response_schema=response_schema,
+                    response_json_schema=_gemini_json_schema(response_schema),
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                        disable=True,
+                    ),
                     temperature=0.1,
                 ),
             )
@@ -154,7 +160,9 @@ class GeminiVideoAnalyzer:
         except Exception as exc:
             # This is the provider boundary: transport, auth, quota, and SDK
             # errors are intentionally normalized for the application layer.
-            raise VideoProviderError(f"Gemini video analysis failed: {exc}") from exc
+            raise VideoProviderError(
+                f"Gemini video {stage} failed: {exc}"
+            ) from exc
         finally:
             if uploaded is not None and uploaded.name:
                 await self._delete_uploaded_file(uploaded.name)
@@ -230,6 +238,82 @@ def _file_state_name(uploaded: types.File) -> str:
         return "PROCESSING"
     name = getattr(state, "name", state)
     return str(name).rsplit(".", 1)[-1].upper()
+
+
+_GEMINI_SCHEMA_KEYS = frozenset(
+    {"type", "properties", "items", "required", "enum"}
+)
+
+
+def _gemini_json_schema(
+    response_type: type[BaseModel],
+) -> dict[str, Any]:
+    """Build a minimal Gemini-compatible schema from a Pydantic model.
+
+    Gemini accepts only a subset of JSON Schema and may reject otherwise valid
+    Pydantic schemas with a generic ``400 INVALID_ARGUMENT``. Generation only
+    needs the structural keys below; Pydantic validates bounds and constraints
+    after the response is received.
+    """
+    schema = response_type.model_json_schema()
+    definitions = schema.get("$defs", {})
+
+    def simplify(value: Any) -> Any:
+        if isinstance(value, list):
+            return [simplify(item) for item in value]
+
+        if not isinstance(value, dict):
+            return value
+
+        alternatives = value.get("anyOf")
+        if isinstance(alternatives, list):
+            non_null = [
+                item
+                for item in alternatives
+                if not (isinstance(item, dict) and item.get("type") == "null")
+            ]
+            if len(non_null) == 1:
+                return simplify(non_null[0])
+
+        reference = value.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/$defs/"):
+            definition_name = reference.removeprefix("#/$defs/")
+            definition = definitions.get(definition_name)
+            if definition is None:
+                raise ValueError(
+                    f"Unknown schema reference: {reference}"
+                )
+
+            resolved = simplify(definition)
+
+            # Resolve nested Pydantic models while retaining structural siblings.
+            siblings = {
+                key: simplify(item)
+                for key, item in value.items()
+                if key != "$ref" and key in _GEMINI_SCHEMA_KEYS
+            }
+            if isinstance(resolved, dict):
+                return {**resolved, **siblings}
+            return resolved
+
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            if key not in _GEMINI_SCHEMA_KEYS:
+                continue
+            if key == "properties" and isinstance(item, dict):
+                result[key] = {
+                    property_name: simplify(property_schema)
+                    for property_name, property_schema in item.items()
+                }
+            else:
+                result[key] = simplify(item)
+
+        return result
+
+    simplified = simplify(schema)
+    if not isinstance(simplified, dict):
+        raise TypeError("The simplified response schema must be an object.")
+    return simplified
 
 
 def _parse_structured(
