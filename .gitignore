@@ -6,6 +6,7 @@
 chatbot.db
 buddy/chatbot.db
 data/*.db
+data/
 
 # --- Python bytecode & caches ---
 __pycache__/
