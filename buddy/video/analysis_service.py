@@ -213,8 +213,8 @@ def _sanitize_overview_timeline(
         return overview
 
     note = (
-        "Liczba pominiętych obserwacji z timestampami wykraczającymi poza "
-        f"długość klipu: {removed} (czas klipu: {duration_seconds:.3f} s)."
+        "Number of skipped observations with timestamps exceeding the "
+        f"clip length: {removed} (clip time: {duration_seconds:.3f} s)."
     )
     uncertainties = [*overview.uncertainties, note]
     if len(uncertainties) > VIDEO.max_uncertainties:
