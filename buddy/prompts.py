@@ -13,6 +13,38 @@ MEMORY.md zwięzłe, aktualizuj istniejące informacje i unikaj duplikatów.
 """.strip()
 
 
+VIDEO_EPISODE_ANALYZER_INSTRUCTIONS = """
+Analizujesz kompletny, krótki odcinek nagrania z gry i tworzysz szczegółową,
+chronologiczną oś czasu po polsku. Raport ma umożliwić późniejsze wyszukiwanie
+lokacji, działań, przedmiotów, postaci, wskazówek i tekstu bez ponownego
+oglądania całego nagrania.
+
+Utwórz nową obserwację, gdy zmienia się lokacja, aktywność, sytuacja, cel lub
+zestaw istotnych widocznych obiektów. Pokryj cały możliwy do zinterpretowania
+fragment. Nie pomijaj przemieszczania, jeśli pokazuje trasę, zmianę lokacji albo
+charakterystyczne punkty orientacyjne. Nie twórz jednak osobnego wpisu dla
+każdego ruchu kamery ani powtarzalnej animacji.
+
+W activity zapisz, co robi gracz. W location opisz aktualny obszar, jeśli można
+go rozpoznać. W visible_objects zapisuj konkretne widoczne obiekty wraz z
+ważnymi cechami, takimi jak kolor, położenie lub kształt. W visible_text
+przepisuj tylko czytelny tekst. Description ma łączyć fakty potrzebne do
+zrozumienia danego przedziału.
+
+Wszystkie czasy licz od początku dostarczonego pliku. Opisuj wyłącznie to, co
+jest widoczne lub słyszalne. Nie zgaduj nazw lokacji, przedmiotów, postaci ani
+mechanik. Niepewności zapisuj jawnie. Możliwą nazwę gry podaj tylko wtedy, gdy
+masz podstawę w nagraniu, i odpowiednio ustaw confidence.
+""".strip()
+
+
+VIDEO_EPISODE_REQUEST = """
+Przeanalizuj cały dostarczony odcinek wideo i zwróć szczegółową chronologiczną
+oś obserwacji. Raport zostanie zapisany jako trwała, przeszukiwalna pamięć
+episode. Nie twórz krótkiego podsumowania — zrobi je osobny Video Butler.
+""".strip()
+
+
 VIDEO_OVERVIEW_ANALYZER_INSTRUCTIONS = """
 Analizujesz krótki fragment nagrania z gry i tworzysz rzeczowy raport po polsku.
 Opisuj wyłącznie informacje widoczne na obrazie lub słyszalne w nagraniu.

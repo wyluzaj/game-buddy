@@ -4,10 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import BaseModel, Field, model_validator
 
 from buddy.config import VIDEO
+
+BoundedObservationText = Annotated[str, Field(min_length=1, max_length=500)]
 
 
 class VideoSegmentStatus(str, Enum):
@@ -32,6 +35,50 @@ class VideoEventImportance(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+class EpisodeObservation(BaseModel):
+    """One continuous, searchable part of a gameplay episode timeline."""
+
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(ge=0)
+    activity: str = Field(min_length=1, max_length=500)
+    location: str | None = Field(default=None, max_length=500)
+    description: str = Field(min_length=1, max_length=2_000)
+    visible_objects: list[BoundedObservationText] = Field(
+        default_factory=list,
+        max_length=VIDEO.max_observation_objects,
+    )
+    visible_text: list[BoundedObservationText] = Field(
+        default_factory=list,
+        max_length=VIDEO.max_observation_texts,
+    )
+    uncertainties: list[BoundedObservationText] = Field(
+        default_factory=list,
+        max_length=VIDEO.max_observation_uncertainties,
+    )
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "EpisodeObservation":
+        """Reject observations that point backwards inside the episode."""
+        if self.end_seconds < self.start_seconds:
+            raise ValueError("An episode observation cannot end before it starts.")
+        return self
+
+
+class EpisodeAnalysis(BaseModel):
+    """Detailed first-pass timeline produced for one complete episode."""
+
+    observations: list[EpisodeObservation] = Field(
+        default_factory=list,
+        max_length=VIDEO.max_episode_observations,
+    )
+    uncertainties: list[BoundedObservationText] = Field(
+        default_factory=list,
+        max_length=VIDEO.max_uncertainties,
+    )
+    possible_game: str | None = Field(default=None, max_length=500)
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class VideoEvent(BaseModel):

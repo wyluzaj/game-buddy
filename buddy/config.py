@@ -38,6 +38,7 @@ class ModelSettings:
     short_term_memory: Model = Model.GEMINI_LITE
     long_term_memory: Model = Model.GEMINI_LITE
     memory_context_butler: Model = Model.GEMINI_LITE
+    video_episode: Model = Model.GEMINI_LITE
     video_overview: Model = Model.GEMINI_LITE
     video_detail: Model = Model.GEMINI_LITE
     video_context_butler: Model = Model.GEMINI_LITE
@@ -112,6 +113,10 @@ class VideoSettings:
     session_observations: int = 50
     session_observation_chars: int = 30_000
     manual_duration_seconds: float = 120.0
+    max_episode_observations: int = 120
+    max_observation_objects: int = 30
+    max_observation_texts: int = 20
+    max_observation_uncertainties: int = 10
     max_overview_events: int = 100
     max_visible_text_observations: int = 100
     max_uncertainties: int = 50

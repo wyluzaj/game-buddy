@@ -220,9 +220,9 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/memory/game_analysis.py` | Source-aware updates of allowed `main/games/*.md` profiles | Receives explicit user evidence and video observations |
 | `buddy/memory/recall.py` | Bounded historical retrieval and reduction | Uses the memory index, Harness store, and Context Butler |
 | `buddy/memory/context_butler.py` | Small agent reducing recalled memory documents | Used only by `memory.recall.py` |
-| `buddy/video/models.py` | Video enums, dataclasses, and Pydantic result models | Shared contract for all video modules |
+| `buddy/video/models.py` | Video enums, dataclasses, legacy overview models, and detailed Episode Pydantic models | Shared contract for all video modules |
 | `buddy/video/analyzer.py` | Provider-neutral overview/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
-| `buddy/video/gemini.py` | Gemini upload, polling, minimal provider-compatible JSON Schema generation, Pydantic parsing, and cleanup | Native provider adapter for overview and detail modes; reports the failing provider stage |
+| `buddy/video/gemini.py` | Gemini upload, polling, minimal provider-compatible JSON Schema generation, Pydantic parsing, and cleanup | Native provider adapter for episode, legacy overview, and detail modes; reports the failing provider stage |
 | `buddy/video/storage.py` | Versioned video schema, validated persistence, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
 | `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, removal of out-of-range provider timestamps with a diagnostic uncertainty, retry, and reuse | Connects `VideoAnalyzer` to `video.storage` without losing an otherwise valid overview |
 | `buddy/video/context_butler.py` | Replacement-state prompt construction and source validation | Used by `video.context_service.py` |
