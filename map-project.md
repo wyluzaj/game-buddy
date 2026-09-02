@@ -58,7 +58,7 @@ buddy.video.cli
             -> video.storage.create_video_segment
             -> video.storage.claim_video_segment_for_analysis
             -> GeminiVideoAnalyzer.analyze_episode
-            -> validate every timestamp against segment duration
+            -> sort timestamps and discard observations beyond segment duration
             -> video.storage.save_video_report(mode=episode)
             -> normalize observations into video_observations + FTS5
             -> link a pre-existing exact game profile when provider confidence >= 0.9
@@ -105,6 +105,8 @@ user asks about a visible or audible detail
 
 The tool never accepts an arbitrary filesystem path from the model. It resolves only
 application-owned `video://segment/<id>` identifiers through SQLite.
+Invalid provider observations are removed before persistence, so the request cache never
+turns an out-of-range timestamp into trusted evidence.
 
 ### Historical memory and recall
 
@@ -246,7 +248,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/video/analyzer.py` | Provider-neutral episode/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
 | `buddy/video/gemini.py` | Gemini upload, polling, minimal provider-compatible JSON Schema generation, Pydantic parsing, and cleanup | Native provider adapter for episode, legacy overview, and detail modes; reports the failing provider stage |
 | `buddy/video/storage.py` | Versioned video schema, validated report/observation persistence, FTS5 episode search, game links, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
-| `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, episode timeline sanitization, retry, legacy-overview reuse, and persistence | Connects `VideoAnalyzer` to `video.storage` without losing an otherwise valid episode |
+| `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, episode timeline sanitization, retry, legacy-overview reuse, conservative game linking, and persistence | Connects `VideoAnalyzer` to `video.storage` without losing an otherwise valid episode |
 | `buddy/video/context_butler.py` | Episode-summary and replacement-state prompt construction plus source validation | Used by `video.context_service.py` |
 | `buddy/video/context_service.py` | Idempotent episode-to-summary/current-context reduction, including late-report handling | Connects storage to Video Context Butler |
 | `buddy/video/pipeline.py` | End-to-end episode and context-update orchestration | Used by the manual CLI and future capture worker |
@@ -254,7 +256,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/video/detail_service.py` | Internal URI parsing, range validation, cache, and detailed reports | Used by the detail tool |
 | `buddy/video/detail_tool.py` | Main-agent tool for question-specific clip inspection | Creates a Gemini analyzer per invocation |
 | `buddy/video/session_memory.py` | Bounded source-aware episode summaries for completed sessions | Used by shutdown and memory processing |
-| `buddy/video/cli.py` | Manual end-to-end episode analysis command | Composes SQLite, Gemini, pipeline, and terminal output |
+| `buddy/video/cli.py` | Manual end-to-end episode analysis command with optional confirmed game association | Composes SQLite, Harness Memory, Gemini, pipeline, and terminal output |
 
 ## Test map
 
@@ -266,17 +268,17 @@ and are deleted after generation whenever cleanup succeeds.
 | `tests/test_long_term_memory.py` | Harness store, injection-only behavior, and agent capabilities |
 | `tests/test_database.py` | Conversations, raw messages, completion, schema versioning, and legacy migrations |
 | `tests/test_memory_index.py` | FTS5 retrieval, relations, path validation, and dates |
-| `tests/test_memory_recall.py` | Retrieval fallback, Context Butler, and source validation |
+| `tests/test_memory_recall.py` | Session/game retrieval, exact video-observation search, recent episode fallback, Context Butler, and source validation |
 | `tests/test_memory_analysis.py` | Session consolidation, retry, games, and video evidence |
 | `tests/test_game_memory_analysis.py` | Allowed-profile and evidence isolation |
 | `tests/test_video_models.py` | Video domain validation |
 | `tests/test_gemini_video_analyzer.py` | SDK adapter, structured modes, provider errors, and cleanup |
 | `tests/test_video_storage.py` | State machine, validated persistence, corruption handling, and lifecycle |
-| `tests/test_video_analysis_service.py` | Content identity, timeline bounds, atomic claim, retry, and overview reuse |
+| `tests/test_video_analysis_service.py` | Content identity, timeline bounds, atomic claim, retry, legacy-overview reuse, and conservative game association |
 | `tests/test_video_context_service.py` | Replacement state, no-change decisions, sources, and ordering |
 | `tests/test_video_context_injection.py` | Context replacement, acknowledgement, and session isolation |
 | `tests/test_video_detail_service.py` | Safe URIs, time ranges, evidence validation, and concurrent detail cache |
-| `tests/test_video_pipeline.py` | Overview-to-context pipeline and partial-failure recovery |
+| `tests/test_video_pipeline.py` | Episode-to-context pipeline and partial-failure recovery |
 | `tests/test_video_cli.py` | Parser defaults, input validation, exit codes, and CLI orchestration |
 
 ## Quality and dependency controls
@@ -301,6 +303,7 @@ Implemented:
 - bounded current-screen context;
 - explicit injection into the matching chat session;
 - source-linked session and game memory;
+- historical recall across timestamped observations and brief episode descriptions;
 - detailed re-analysis through an agent tool.
 
 Not implemented yet:
@@ -309,4 +312,6 @@ Not implemented yet:
 - selecting and recording a specific game window;
 - automatic clip rotation and folder watching;
 - recording pause/resume controls;
+- automatic active-game detection and profile injection into live chat;
+- visual frame/embedding indexing across long recordings;
 - autonomous time-driven agent rounds.

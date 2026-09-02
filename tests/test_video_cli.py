@@ -1,4 +1,7 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from buddy.config import STORAGE, VIDEO
 from buddy.video import cli
@@ -95,3 +98,66 @@ def test_main_maps_expected_analysis_failure_to_exit_one(
     error = capsys.readouterr().err
     assert "Video analysis failed" in error
     assert "invalid provider response" in error
+
+
+def test_run_analysis_links_confirmed_game_profile(tmp_path, monkeypatch) -> None:
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"video")
+    memory = object()
+    context_butler = object()
+    sentinel = object()
+    captured: dict[str, object] = {}
+
+    class FakeAnalyzer:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+    async def fake_ensure_game_document(conn, actual_memory, game):
+        captured.update(memory=actual_memory, game=game)
+        return SimpleNamespace(id=42)
+
+    async def fake_process_video_file(conn, analyzer, butler, **kwargs):
+        captured.update(
+            analyzer=analyzer,
+            context_butler=butler,
+            process_kwargs=kwargs,
+        )
+        return sentinel
+
+    monkeypatch.setattr(cli, "create_long_term_memory", lambda path: memory)
+    monkeypatch.setattr(cli, "ensure_game_document", fake_ensure_game_document)
+    monkeypatch.setattr(
+        cli,
+        "build_video_context_butler",
+        lambda: context_butler,
+    )
+    monkeypatch.setattr(cli, "GeminiVideoAnalyzer", FakeAnalyzer)
+    monkeypatch.setattr(cli, "process_video_file", fake_process_video_file)
+    started_at = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+
+    result = asyncio.run(
+        cli._run_analysis(
+            object(),
+            video_path=clip,
+            started_at=started_at,
+            ended_at=started_at + timedelta(minutes=2),
+            conversation_id=7,
+            game="Big Walk",
+            memory_database=tmp_path / "memory.db",
+        )
+    )
+
+    assert result is sentinel
+    assert captured["memory"] is memory
+    assert captured["game"] == "Big Walk"
+    assert captured["context_butler"] is context_butler
+    assert captured["process_kwargs"] == {
+        "file_path": clip,
+        "started_at": started_at,
+        "ended_at": started_at + timedelta(minutes=2),
+        "conversation_id": 7,
+        "game_document_id": 42,
+    }
