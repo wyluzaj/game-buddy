@@ -85,7 +85,7 @@ async def analyze_video_detail_source(
             start_seconds=parsed.start_seconds,
             end_seconds=parsed.end_seconds,
         )
-        sources = _validate_and_build_sources(analysis, parsed)
+        analysis, sources = _sanitize_and_build_sources(analysis, parsed)
         content = analysis.model_dump(mode="json")
         content["requested_source"] = parsed.canonical_uri
         content["sources"] = sources
@@ -149,25 +149,50 @@ def _detail_request_key(
     return sha256(raw.encode()).hexdigest()
 
 
-def _validate_and_build_sources(
+def _sanitize_and_build_sources(
     analysis: VideoDetailAnalysis,
     requested: ParsedVideoSource,
-) -> list[str]:
+) -> tuple[VideoDetailAnalysis, list[str]]:
+    """Drop provider evidence outside the requested clip without expanding it."""
     sources: list[str] = []
+    valid_observations = []
+    dropped_count = 0
     base = f"video://segment/{requested.segment_id}"
     for observation in analysis.observations:
         if (
             observation.start_seconds < requested.start_seconds - 0.001
             or observation.end_seconds > requested.end_seconds + 0.001
         ):
-            raise VideoDetailStateError(
-                "Detailed analysis returned evidence outside the requested range."
-            )
+            dropped_count += 1
+            continue
+        valid_observations.append(observation)
         sources.append(
             f"{base}?t={_format_seconds(observation.start_seconds)}-"
             f"{_format_seconds(observation.end_seconds)}"
         )
-    return list(dict.fromkeys(sources)) or [requested.canonical_uri]
+
+    if dropped_count == 0:
+        return analysis, list(dict.fromkeys(sources)) or [requested.canonical_uri]
+
+    range_label = (
+        f"{_format_seconds(requested.start_seconds)}-"
+        f"{_format_seconds(requested.end_seconds)}s"
+    )
+    uncertainty = (
+        f"Odrzucono {dropped_count} obserwację(-e) spoza żądanego zakresu "
+        f"{range_label}."
+    )
+    answer = analysis.answer
+    if not valid_observations:
+        answer = "Nie udało się potwierdzić odpowiedzi w żądanym zakresie nagrania."
+    sanitized = analysis.model_copy(
+        update={
+            "answer": answer,
+            "observations": valid_observations,
+            "uncertainties": [*analysis.uncertainties, uncertainty],
+        }
+    )
+    return sanitized, list(dict.fromkeys(sources)) or [requested.canonical_uri]
 
 
 def _answer_from_report(

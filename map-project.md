@@ -95,7 +95,8 @@ user asks about a visible or audible detail
        -> build a canonical request key and acquire its in-process lock
        -> reuse an identical indexed detail report when available
        -> GeminiVideoAnalyzer.analyze_detail
-       -> validate evidence timestamps
+       -> discard provider evidence outside the requested range
+       -> if no valid evidence remains, return a controlled uncertain answer
        -> video.storage.save_video_report(mode=detail, request_key=...)
   -> compact answer + validated video:// sources return to the main agent
 ```
