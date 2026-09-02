@@ -110,7 +110,9 @@ def test_init_db_migrates_existing_conversations_table(tmp_path):
                 'memory_search',
                 'video_segments',
                 'video_reports',
-                'video_context_updates'
+                'video_context_updates',
+                'video_observations',
+                'video_observation_search'
             )
             """
         ).fetchall()
@@ -125,6 +127,8 @@ def test_init_db_migrates_existing_conversations_table(tmp_path):
         "video_segments",
         "video_reports",
         "video_context_updates",
+        "video_observations",
+        "video_observation_search",
     }
 
 
@@ -204,10 +208,15 @@ def test_init_db_versions_and_migrates_legacy_video_schema(tmp_path):
     )
     schema_version = migrated.execute("PRAGMA user_version").fetchone()[0]
     foreign_key_errors = migrated.execute("PRAGMA foreign_key_check").fetchall()
+    report_schema = migrated.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'video_reports'"
+    ).fetchone()["sql"]
     migrated.close()
 
     assert "recording_key" in segment_columns
+    assert "game_document_id" in segment_columns
     assert "request_key" in report_columns
+    assert "'episode'" in report_schema
     assert legacy_row["recording_key"] == "legacy:1"
     assert second.id != 1
     assert schema_version == LATEST_SCHEMA_VERSION

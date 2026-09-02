@@ -1,6 +1,7 @@
 """SQLite metadata and report storage for locally recorded video segments."""
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -10,6 +11,9 @@ from typing import Mapping
 from pydantic import ValidationError
 
 from buddy.video.models import (
+    EpisodeAnalysis,
+    EpisodeObservation,
+    StoredEpisodeObservation,
     VideoContextUpdate,
     VideoDetailAnalysis,
     VideoOverview,
@@ -32,6 +36,7 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS video_segments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             conversation_id INTEGER,
+            game_document_id INTEGER,
             file_path TEXT NOT NULL,
             recording_key TEXT NOT NULL UNIQUE,
             started_at TEXT NOT NULL,
@@ -43,7 +48,9 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (conversation_id)
-                REFERENCES conversations (id) ON DELETE SET NULL
+                REFERENCES conversations (id) ON DELETE SET NULL,
+            FOREIGN KEY (game_document_id)
+                REFERENCES memory_documents (id) ON DELETE SET NULL
         )
         """
     )
@@ -52,7 +59,7 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS video_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             segment_id INTEGER NOT NULL,
-            mode TEXT NOT NULL CHECK (mode IN ('overview', 'detail')),
+            mode TEXT NOT NULL CHECK (mode IN ('overview', 'episode', 'detail')),
             question TEXT,
             request_key TEXT,
             provider TEXT NOT NULL,
@@ -82,8 +89,58 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS video_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER NOT NULL,
+            segment_id INTEGER NOT NULL,
+            start_seconds REAL NOT NULL CHECK (start_seconds >= 0),
+            end_seconds REAL NOT NULL CHECK (end_seconds >= start_seconds),
+            activity TEXT NOT NULL,
+            location TEXT,
+            description TEXT NOT NULL,
+            visible_objects_json TEXT NOT NULL DEFAULT '[]',
+            visible_text_json TEXT NOT NULL DEFAULT '[]',
+            uncertainties_json TEXT NOT NULL DEFAULT '[]',
+            FOREIGN KEY (report_id)
+                REFERENCES video_reports (id) ON DELETE CASCADE,
+            FOREIGN KEY (segment_id)
+                REFERENCES video_segments (id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS video_observation_search USING fts5(
+            observation_id UNINDEXED,
+            activity,
+            location,
+            description,
+            visible_objects,
+            visible_text,
+            tokenize = 'unicode61 remove_diacritics 2'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS video_observations_after_delete
+        AFTER DELETE ON video_observations
+        BEGIN
+            DELETE FROM video_observation_search
+            WHERE observation_id = OLD.id;
+        END
+        """
+    )
+    conn.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_video_segments_status_created
         ON video_segments (status, created_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_video_segments_game_started
+        ON video_segments (game_document_id, started_at)
         """
     )
     conn.execute(
@@ -113,6 +170,12 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE INDEX IF NOT EXISTS idx_video_observations_segment_time
+        ON video_observations (segment_id, start_seconds, end_seconds)
+        """
+    )
+    conn.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_video_context_updates_pending
         ON video_context_updates (changed, injected_at, created_at)
         """
@@ -126,6 +189,7 @@ def create_video_segment(
     started_at: datetime,
     ended_at: datetime,
     conversation_id: int | None = None,
+    game_document_id: int | None = None,
     recording_key: str | None = None,
 ) -> VideoSegment:
     """Persist one completed local recording and return its metadata."""
@@ -135,11 +199,13 @@ def create_video_segment(
     duration_seconds = (end - start).total_seconds()
     if duration_seconds <= 0:
         raise ValueError("A video segment must end after it starts.")
+    _validate_game_document_id(conn, game_document_id)
     normalized_recording_key = recording_key or _metadata_recording_key(
         normalized_path,
         start,
         end,
         conversation_id,
+        game_document_id,
     )
 
     now = datetime.now(timezone.utc)
@@ -148,6 +214,7 @@ def create_video_segment(
             """
             INSERT INTO video_segments (
                 conversation_id,
+                game_document_id,
                 file_path,
                 recording_key,
                 started_at,
@@ -157,10 +224,11 @@ def create_video_segment(
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 conversation_id,
+                game_document_id,
                 normalized_path,
                 normalized_recording_key,
                 start.isoformat(),
@@ -220,6 +288,26 @@ def get_video_segment_by_recording_key(
         (recording_key,),
     ).fetchone()
     return _segment_from_row(row) if row is not None else None
+
+
+def assign_video_segment_game(
+    conn: sqlite3.Connection,
+    segment_id: int,
+    game_document_id: int | None,
+) -> VideoSegment:
+    """Attach or clear one confirmed indexed game profile for a segment."""
+    if get_video_segment(conn, segment_id) is None:
+        raise ValueError(f"Unknown video segment: {segment_id}.")
+    _validate_game_document_id(conn, game_document_id)
+    with conn:
+        conn.execute(
+            "UPDATE video_segments SET game_document_id = ? WHERE id = ?",
+            (game_document_id, segment_id),
+        )
+    updated = get_video_segment(conn, segment_id)
+    if updated is None:
+        raise RuntimeError("The updated video segment could not be reloaded.")
+    return updated
 
 
 def claim_video_segment_for_analysis(
@@ -314,24 +402,24 @@ def save_video_report(
     question: str | None = None,
     request_key: str | None = None,
 ) -> VideoReport:
-    """Persist a structured overview or question-specific detail report."""
+    """Persist one validated episode, legacy overview, or detail report."""
     normalized_question = question.strip() if question and question.strip() else None
     if mode is VideoReportMode.DETAIL and normalized_question is None:
         raise ValueError("A detailed video report requires its question.")
-    if mode is VideoReportMode.OVERVIEW and normalized_question is not None:
-        raise ValueError("An overview video report cannot have a question.")
+    if mode is not VideoReportMode.DETAIL and normalized_question is not None:
+        raise ValueError("A primary video report cannot have a question.")
     if not provider.strip() or not model_name.strip():
         raise ValueError("A video report requires provider and model names.")
     normalized_request_key = request_key.strip() if request_key else None
-    if mode is VideoReportMode.OVERVIEW and normalized_request_key is not None:
-        raise ValueError("An overview report cannot have a detail request key.")
+    if mode is not VideoReportMode.DETAIL and normalized_request_key is not None:
+        raise ValueError("A primary report cannot have a detail request key.")
 
     segment = get_video_segment(conn, segment_id)
     if segment is None:
         raise ValueError(f"Unknown video segment: {segment_id}.")
-    if mode is VideoReportMode.OVERVIEW:
+    if mode in (VideoReportMode.OVERVIEW, VideoReportMode.EPISODE):
         if segment.status is not VideoSegmentStatus.PROCESSING:
-            raise ValueError("An overview report requires a processing segment.")
+            raise ValueError("A primary report requires a processing segment.")
         _validate_report_content(mode, content)
     elif segment.status is not VideoSegmentStatus.COMPLETED:
         raise ValueError("A detail report requires a completed segment.")
@@ -366,7 +454,14 @@ def save_video_report(
                 now,
             ),
         )
-        if mode is VideoReportMode.OVERVIEW:
+        if mode is VideoReportMode.EPISODE:
+            _save_episode_observations(
+                conn,
+                report_id=cursor.lastrowid,
+                segment_id=segment_id,
+                analysis=EpisodeAnalysis.model_validate(content),
+            )
+        if mode in (VideoReportMode.OVERVIEW, VideoReportMode.EPISODE):
             completed = conn.execute(
                 """
                 UPDATE video_segments
@@ -440,6 +535,75 @@ def get_video_report_by_request_key(
         (request_key,),
     ).fetchone()
     return _report_from_row(row) if row is not None else None
+
+
+def get_episode_observations(
+    conn: sqlite3.Connection,
+    segment_id: int,
+) -> list[StoredEpisodeObservation]:
+    """Return one episode's normalized observations in timeline order."""
+    rows = conn.execute(
+        """
+        SELECT * FROM video_observations
+        WHERE segment_id = ?
+        ORDER BY start_seconds, end_seconds, id
+        """,
+        (segment_id,),
+    ).fetchall()
+    return [_episode_observation_from_row(row) for row in rows]
+
+
+def search_episode_observations(
+    conn: sqlite3.Connection,
+    *,
+    query: str,
+    conversation_id: int | None = None,
+    game_document_id: int | None = None,
+    occurred_from: datetime | None = None,
+    occurred_before: datetime | None = None,
+    limit: int = 5,
+) -> list[StoredEpisodeObservation]:
+    """Search bounded episode evidence by text plus session/game/date filters."""
+    fts_query = _build_fts_query(query)
+    if not 1 <= limit <= 100:
+        raise ValueError("Video observation search limit must be between 1 and 100.")
+
+    filters: list[str] = []
+    parameters: list[object] = [fts_query]
+    if conversation_id is not None:
+        filters.append("segments.conversation_id = ?")
+        parameters.append(conversation_id)
+    if game_document_id is not None:
+        _validate_game_document_id(conn, game_document_id)
+        filters.append("segments.game_document_id = ?")
+        parameters.append(game_document_id)
+    if occurred_from is not None:
+        filters.append("segments.started_at >= ?")
+        parameters.append(_normalize_datetime(occurred_from).isoformat())
+    if occurred_before is not None:
+        filters.append("segments.started_at < ?")
+        parameters.append(_normalize_datetime(occurred_before).isoformat())
+    where_filters = "".join(f" AND {item}" for item in filters)
+    parameters.append(limit)
+
+    rows = conn.execute(
+        f"""
+        SELECT observations.*
+        FROM video_observation_search AS search
+        JOIN video_observations AS observations
+          ON observations.id = search.observation_id
+        JOIN video_segments AS segments
+          ON segments.id = observations.segment_id
+        WHERE video_observation_search MATCH ?
+          {where_filters}
+        ORDER BY bm25(video_observation_search),
+                 segments.started_at DESC,
+                 observations.start_seconds
+        LIMIT ?
+        """,
+        parameters,
+    ).fetchall()
+    return [_episode_observation_from_row(row) for row in rows]
 
 
 def save_video_context_update(
@@ -633,6 +797,94 @@ def mark_video_context_injected_through(
         )
 
 
+def _save_episode_observations(
+    conn: sqlite3.Connection,
+    *,
+    report_id: int | None,
+    segment_id: int,
+    analysis: EpisodeAnalysis,
+) -> None:
+    if report_id is None:
+        raise RuntimeError("SQLite did not return an ID for the episode report.")
+    for observation in analysis.observations:
+        cursor = conn.execute(
+            """
+            INSERT INTO video_observations (
+                report_id,
+                segment_id,
+                start_seconds,
+                end_seconds,
+                activity,
+                location,
+                description,
+                visible_objects_json,
+                visible_text_json,
+                uncertainties_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                report_id,
+                segment_id,
+                observation.start_seconds,
+                observation.end_seconds,
+                observation.activity,
+                observation.location,
+                observation.description,
+                json.dumps(observation.visible_objects, ensure_ascii=False),
+                json.dumps(observation.visible_text, ensure_ascii=False),
+                json.dumps(observation.uncertainties, ensure_ascii=False),
+            ),
+        )
+        observation_id = cursor.lastrowid
+        if observation_id is None:
+            raise RuntimeError("SQLite did not return an observation ID.")
+        conn.execute(
+            """
+            INSERT INTO video_observation_search (
+                observation_id,
+                activity,
+                location,
+                description,
+                visible_objects,
+                visible_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                observation_id,
+                observation.activity,
+                observation.location or "",
+                observation.description,
+                "\n".join(observation.visible_objects),
+                "\n".join(observation.visible_text),
+            ),
+        )
+
+
+def _build_fts_query(query: str) -> str:
+    tokens = re.findall(r"\w+", query.casefold(), flags=re.UNICODE)
+    if not tokens:
+        raise ValueError("Video observation search query must contain text.")
+    return " ".join(f'"{token}"*' for token in tokens)
+
+
+def _validate_game_document_id(
+    conn: sqlite3.Connection,
+    game_document_id: int | None,
+) -> None:
+    if game_document_id is None:
+        return
+    row = conn.execute(
+        "SELECT document_type FROM memory_documents WHERE id = ?",
+        (game_document_id,),
+    ).fetchone()
+    if row is None or row["document_type"] != "game":
+        raise ValueError(
+            f"Memory document {game_document_id} is not an indexed game profile."
+        )
+
+
 def _normalize_file_path(file_path: str | Path) -> str:
     raw_path = str(file_path).strip()
     if not raw_path:
@@ -657,6 +909,7 @@ def _segment_from_row(row: sqlite3.Row) -> VideoSegment:
     return VideoSegment(
         id=row["id"],
         conversation_id=row["conversation_id"],
+        game_document_id=row["game_document_id"],
         file_path=Path(row["file_path"]),
         recording_key=row["recording_key"],
         started_at=_parse_datetime(row["started_at"]),
@@ -667,6 +920,46 @@ def _segment_from_row(row: sqlite3.Row) -> VideoSegment:
         created_at=_parse_datetime(row["created_at"]),
         updated_at=_parse_datetime(row["updated_at"]),
     )
+
+
+def _episode_observation_from_row(
+    row: sqlite3.Row,
+) -> StoredEpisodeObservation:
+    try:
+        visible_objects = _json_string_list(row["visible_objects_json"])
+        visible_text = _json_string_list(row["visible_text_json"])
+        uncertainties = _json_string_list(row["uncertainties_json"])
+        validated = EpisodeObservation(
+            start_seconds=row["start_seconds"],
+            end_seconds=row["end_seconds"],
+            activity=row["activity"],
+            location=row["location"],
+            description=row["description"],
+            visible_objects=visible_objects,
+            visible_text=visible_text,
+            uncertainties=uncertainties,
+        )
+        return StoredEpisodeObservation(
+            id=row["id"],
+            report_id=row["report_id"],
+            segment_id=row["segment_id"],
+            **validated.model_dump(),
+        )
+    except (KeyError, TypeError, ValueError, ValidationError) as exc:
+        raise VideoStorageDataError(
+            "Stored episode observation is invalid."
+        ) from exc
+
+
+def _json_string_list(value: object) -> list[str]:
+    if not isinstance(value, str):
+        raise TypeError("Stored JSON list must be text.")
+    parsed = json.loads(value)
+    if not isinstance(parsed, list) or not all(
+        isinstance(item, str) for item in parsed
+    ):
+        raise TypeError("Stored JSON value must contain a string list.")
+    return parsed
 
 
 def _report_from_row(row: sqlite3.Row) -> VideoReport:
@@ -723,7 +1016,12 @@ def _validate_report_content(
     mode: VideoReportMode,
     content: Mapping[str, object],
 ) -> None:
-    model = VideoOverview if mode is VideoReportMode.OVERVIEW else VideoDetailAnalysis
+    models = {
+        VideoReportMode.OVERVIEW: VideoOverview,
+        VideoReportMode.EPISODE: EpisodeAnalysis,
+        VideoReportMode.DETAIL: VideoDetailAnalysis,
+    }
+    model = models[mode]
     model.model_validate(content)
 
 
@@ -732,6 +1030,7 @@ def _metadata_recording_key(
     started_at: datetime,
     ended_at: datetime,
     conversation_id: int | None,
+    game_document_id: int | None,
 ) -> str:
     raw = "\0".join(
         (
@@ -739,13 +1038,14 @@ def _metadata_recording_key(
             started_at.isoformat(),
             ended_at.isoformat(),
             str(conversation_id),
+            str(game_document_id),
         )
     )
     return sha256(raw.encode()).hexdigest()
 
 
 def _migrate_legacy_video_schema(conn: sqlite3.Connection) -> None:
-    """Upgrade the pre-versioned video tables without losing reports."""
+    """Upgrade older video tables without losing reports or stable IDs."""
     table = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'video_segments'"
     ).fetchone()
@@ -757,6 +1057,13 @@ def _migrate_legacy_video_schema(conn: sqlite3.Connection) -> None:
     report_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(video_reports)")
     }
+    report_table = conn.execute(
+        """
+        SELECT sql FROM sqlite_master
+        WHERE type = 'table' AND name = 'video_reports'
+        """
+    ).fetchone()
+    report_table_sql = report_table["sql"] if report_table is not None else ""
     has_unique_path = any(
         index["unique"]
         and [
@@ -769,7 +1076,9 @@ def _migrate_legacy_video_schema(conn: sqlite3.Connection) -> None:
     )
     if (
         "recording_key" in segment_columns
+        and "game_document_id" in segment_columns
         and "request_key" in report_columns
+        and "'episode'" in report_table_sql
         and not has_unique_path
     ):
         return
@@ -783,6 +1092,7 @@ def _migrate_legacy_video_schema(conn: sqlite3.Connection) -> None:
                 CREATE TABLE video_segments_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     conversation_id INTEGER,
+                    game_document_id INTEGER,
                     file_path TEXT NOT NULL,
                     recording_key TEXT NOT NULL UNIQUE,
                     started_at TEXT NOT NULL,
@@ -794,7 +1104,9 @@ def _migrate_legacy_video_schema(conn: sqlite3.Connection) -> None:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY (conversation_id)
-                        REFERENCES conversations (id) ON DELETE SET NULL
+                        REFERENCES conversations (id) ON DELETE SET NULL,
+                    FOREIGN KEY (game_document_id)
+                        REFERENCES memory_documents (id) ON DELETE SET NULL
                 )
                 """
             )
@@ -803,14 +1115,19 @@ def _migrate_legacy_video_schema(conn: sqlite3.Connection) -> None:
                 if "recording_key" in segment_columns
                 else "'legacy:' || id"
             )
+            game_document_sql = (
+                "game_document_id" if "game_document_id" in segment_columns else "NULL"
+            )
             conn.execute(
                 f"""
                 INSERT INTO video_segments_new (
-                    id, conversation_id, file_path, recording_key, started_at,
-                    ended_at, duration_seconds, status, error, created_at, updated_at
+                    id, conversation_id, game_document_id, file_path, recording_key,
+                    started_at, ended_at, duration_seconds, status, error, created_at,
+                    updated_at
                 )
-                SELECT id, conversation_id, file_path, {recording_key_sql}, started_at,
-                       ended_at, duration_seconds, status, error, created_at, updated_at
+                SELECT id, conversation_id, {game_document_sql}, file_path,
+                       {recording_key_sql}, started_at, ended_at, duration_seconds,
+                       status, error, created_at, updated_at
                 FROM video_segments
                 """
             )
@@ -819,7 +1136,8 @@ def _migrate_legacy_video_schema(conn: sqlite3.Connection) -> None:
                 CREATE TABLE video_reports_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     segment_id INTEGER NOT NULL,
-                    mode TEXT NOT NULL CHECK (mode IN ('overview', 'detail')),
+                    mode TEXT NOT NULL
+                        CHECK (mode IN ('overview', 'episode', 'detail')),
                     question TEXT,
                     request_key TEXT,
                     provider TEXT NOT NULL,

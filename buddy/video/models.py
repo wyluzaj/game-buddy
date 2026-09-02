@@ -26,6 +26,7 @@ class VideoReportMode(str, Enum):
     """Kinds of persisted analysis produced for a video segment."""
 
     OVERVIEW = "overview"
+    EPISODE = "episode"
     DETAIL = "detail"
 
 
@@ -161,6 +162,7 @@ class VideoSegment:
 
     id: int
     conversation_id: int | None
+    game_document_id: int | None
     file_path: Path
     recording_key: str
     started_at: datetime
@@ -175,6 +177,30 @@ class VideoSegment:
     def source_uri(self) -> str:
         """Stable application URI that does not depend on an API provider."""
         return f"video://segment/{self.id}"
+
+
+@dataclass(frozen=True, slots=True)
+class StoredEpisodeObservation:
+    """One normalized, searchable observation persisted from an episode."""
+
+    id: int
+    report_id: int
+    segment_id: int
+    start_seconds: float
+    end_seconds: float
+    activity: str
+    location: str | None
+    description: str
+    visible_objects: list[str]
+    visible_text: list[str]
+    uncertainties: list[str]
+
+    @property
+    def source_uri(self) -> str:
+        """Return the exact application-owned range supporting this record."""
+        start = _format_seconds(self.start_seconds)
+        end = _format_seconds(self.end_seconds)
+        return f"video://segment/{self.segment_id}?t={start}-{end}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,3 +230,7 @@ class VideoContextUpdate:
     uncertainty: str | None
     created_at: datetime
     injected_at: datetime | None
+
+
+def _format_seconds(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".")

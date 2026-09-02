@@ -150,10 +150,15 @@ conversations
 
 video_segments
   recording_key = SHA-256(bytes + capture metadata)
+  optional game_document_id -> memory_documents (game)
   1 -> many video_reports
 
-video_reports (overview)
+video_reports (overview or episode)
   1 -> 0..1 video_context_updates
+
+video_reports (episode)
+  1 -> many video_observations
+  indexed by video_observation_search (FTS5)
 
 video_reports (detail)
   unique request_key -> one cached answer
@@ -171,12 +176,13 @@ Main responsibilities:
 - raw conversation persistence and completion state;
 - searchable metadata for logical memory documents;
 - session-to-game relations;
-- normalized paths to local video files;
-- overview/detail reports and compact context updates.
+- normalized paths to local video files and optional confirmed game profiles;
+- overview/episode/detail reports, searchable observations, and compact context updates.
 
 The database uses `PRAGMA user_version`. Schema version 2 migrated the original path-unique
 video tables to recording keys and added indexed detail request keys. Version 3 adds the
-memory-processing journal. Existing segment/report/context IDs are preserved. Storage reads
+memory-processing journal. Version 4 adds detailed episode reports, normalized searchable
+observations, and optional segment-to-game links. Existing segment/report/context IDs are preserved. Storage reads
 validate report JSON and context-source JSON before returning domain objects.
 
 ### `data/memory.db`
@@ -223,7 +229,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/video/models.py` | Video enums, dataclasses, legacy overview models, and detailed Episode Pydantic models | Shared contract for all video modules |
 | `buddy/video/analyzer.py` | Provider-neutral overview/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
 | `buddy/video/gemini.py` | Gemini upload, polling, minimal provider-compatible JSON Schema generation, Pydantic parsing, and cleanup | Native provider adapter for episode, legacy overview, and detail modes; reports the failing provider stage |
-| `buddy/video/storage.py` | Versioned video schema, validated persistence, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
+| `buddy/video/storage.py` | Versioned video schema, validated report/observation persistence, FTS5 episode search, game links, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
 | `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, removal of out-of-range provider timestamps with a diagnostic uncertainty, retry, and reuse | Connects `VideoAnalyzer` to `video.storage` without losing an otherwise valid overview |
 | `buddy/video/context_butler.py` | Replacement-state prompt construction and source validation | Used by `video.context_service.py` |
 | `buddy/video/context_service.py` | Idempotent overview-to-context reduction | Connects storage to Video Context Butler |
