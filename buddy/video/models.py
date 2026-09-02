@@ -230,6 +230,50 @@ class VideoContextUpdate:
     uncertainty: str | None
     created_at: datetime
     injected_at: datetime | None
+    episode_summary: str = ""
+
+
+def episode_from_legacy_overview(
+    overview: VideoOverview,
+    *,
+    duration_seconds: float,
+) -> EpisodeAnalysis:
+    """Project a stored legacy overview into the detailed episode contract."""
+    observations = [
+        EpisodeObservation(
+            start_seconds=event.start_seconds,
+            end_seconds=event.end_seconds,
+            activity=event.description,
+            description=event.description,
+        )
+        for event in overview.events
+    ]
+    observations.extend(
+        EpisodeObservation(
+            start_seconds=text.timestamp_seconds,
+            end_seconds=text.timestamp_seconds,
+            activity="Odczyt tekstu z ekranu.",
+            description=f"Na ekranie widoczny jest tekst: {text.text}",
+            visible_text=[text.text],
+        )
+        for text in overview.visible_text
+    )
+    if not observations:
+        observations.append(
+            EpisodeObservation(
+                start_seconds=0,
+                end_seconds=duration_seconds,
+                activity="Ogólny przebieg odcinka.",
+                description=overview.summary,
+            )
+        )
+    observations.sort(key=lambda item: (item.start_seconds, item.end_seconds))
+    return EpisodeAnalysis(
+        observations=observations[: VIDEO.max_episode_observations],
+        uncertainties=overview.uncertainties,
+        possible_game=overview.possible_game,
+        confidence=overview.confidence,
+    )
 
 
 def _format_seconds(value: float) -> str:

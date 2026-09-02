@@ -12,13 +12,16 @@ from pydantic import ValidationError
 from buddy.config import VIDEO
 from buddy.video.analyzer import VideoAnalyzer
 from buddy.video.models import (
+    EpisodeAnalysis,
     VideoOverview,
     VideoReport,
     VideoReportMode,
     VideoSegment,
     VideoSegmentStatus,
+    episode_from_legacy_overview,
 )
 from buddy.video.storage import (
+    assign_video_segment_game,
     claim_video_segment_for_analysis,
     create_video_segment,
     get_video_reports,
@@ -39,7 +42,7 @@ class VideoAnalysisOutcome:
 
     segment: VideoSegment
     report: VideoReport
-    overview: VideoOverview
+    episode: EpisodeAnalysis
     reused_existing_report: bool
 
 
@@ -51,8 +54,9 @@ async def register_and_analyze_video(
     started_at: datetime,
     ended_at: datetime,
     conversation_id: int | None = None,
+    game_document_id: int | None = None,
 ) -> VideoAnalysisOutcome:
-    """Register one local recording once, then run or reuse its overview."""
+    """Register one local recording once, then run or reuse its episode report."""
     path = Path(file_path).expanduser().resolve(strict=False)
     if (
         started_at.tzinfo is None
@@ -70,14 +74,25 @@ async def register_and_analyze_video(
         conversation_id=conversation_id,
     )
     existing = get_video_segment_by_recording_key(conn, recording_key)
-    segment = existing or create_video_segment(
-        conn,
-        file_path=path,
-        started_at=normalized_start,
-        ended_at=normalized_end,
-        conversation_id=conversation_id,
-        recording_key=recording_key,
-    )
+    if existing is not None:
+        if game_document_id is not None and existing.game_document_id is None:
+            existing = assign_video_segment_game(conn, existing.id, game_document_id)
+        elif (
+            game_document_id is not None
+            and existing.game_document_id != game_document_id
+        ):
+            raise ValueError("The existing video segment belongs to another game.")
+        segment = existing
+    else:
+        segment = create_video_segment(
+            conn,
+            file_path=path,
+            started_at=normalized_start,
+            ended_at=normalized_end,
+            conversation_id=conversation_id,
+            game_document_id=game_document_id,
+            recording_key=recording_key,
+        )
     return await analyze_video_segment(conn, analyzer, segment.id)
 
 
@@ -86,7 +101,7 @@ async def analyze_video_segment(
     analyzer: VideoAnalyzer,
     segment_id: int,
 ) -> VideoAnalysisOutcome:
-    """Analyze one segment exactly once and persist its structured overview."""
+    """Analyze one segment exactly once and persist its detailed timeline."""
     current = get_video_segment(conn, segment_id)
     if current is None:
         raise ValueError(f"Unknown video segment: {segment_id}.")
@@ -103,15 +118,15 @@ async def analyze_video_segment(
         )
 
     try:
-        overview = await analyzer.analyze_overview(claimed.file_path)
-        overview = _sanitize_overview_timeline(overview, claimed.duration_seconds)
+        episode = await analyzer.analyze_episode(claimed.file_path)
+        episode = _sanitize_episode_timeline(episode, claimed.duration_seconds)
         report = save_video_report(
             conn,
             segment_id=claimed.id,
-            mode=VideoReportMode.OVERVIEW,
+            mode=VideoReportMode.EPISODE,
             provider=analyzer.provider,
             model_name=analyzer.model_name,
-            content=overview.model_dump(mode="json"),
+            content=episode.model_dump(mode="json"),
         )
     except asyncio.CancelledError:
         update_video_segment_status(
@@ -135,7 +150,7 @@ async def analyze_video_segment(
     return VideoAnalysisOutcome(
         segment=completed,
         report=report,
-        overview=overview,
+        episode=episode,
         reused_existing_report=False,
     )
 
@@ -147,23 +162,46 @@ def _load_completed_outcome(
     reports = get_video_reports(
         conn,
         segment.id,
-        mode=VideoReportMode.OVERVIEW,
+        mode=VideoReportMode.EPISODE,
     )
     if not reports:
-        raise VideoSegmentStateError(
-            f"Completed video segment {segment.id} has no overview report."
+        legacy_reports = get_video_reports(
+            conn,
+            segment.id,
+            mode=VideoReportMode.OVERVIEW,
+        )
+        if not legacy_reports:
+            raise VideoSegmentStateError(
+                f"Completed video segment {segment.id} has no primary report."
+            )
+        report = legacy_reports[-1]
+        try:
+            legacy = VideoOverview.model_validate(report.content)
+        except ValidationError as exc:
+            raise VideoSegmentStateError(
+                f"Completed video segment {segment.id} has an invalid legacy report."
+            ) from exc
+        episode = episode_from_legacy_overview(
+            legacy,
+            duration_seconds=segment.duration_seconds,
+        )
+        return VideoAnalysisOutcome(
+            segment=segment,
+            report=report,
+            episode=episode,
+            reused_existing_report=True,
         )
     report = reports[-1]
     try:
-        overview = VideoOverview.model_validate(report.content)
+        episode = EpisodeAnalysis.model_validate(report.content)
     except ValidationError as exc:
         raise VideoSegmentStateError(
-            f"Completed video segment {segment.id} has an invalid overview report."
+            f"Completed video segment {segment.id} has an invalid episode report."
         ) from exc
     return VideoAnalysisOutcome(
         segment=segment,
         report=report,
-        overview=overview,
+        episode=episode,
         reused_existing_report=True,
     )
 
@@ -188,41 +226,44 @@ def _recording_key(
     with path.open("rb") as video_file:
         while chunk := video_file.read(VIDEO.hash_chunk_bytes):
             digest.update(chunk)
-    for value in (started_at.isoformat(), ended_at.isoformat(), str(conversation_id)):
+    for value in (
+        started_at.isoformat(),
+        ended_at.isoformat(),
+        str(conversation_id),
+    ):
         digest.update(b"\0")
         digest.update(value.encode())
     return digest.hexdigest()
 
 
-def _sanitize_overview_timeline(
-    overview: VideoOverview,
+def _sanitize_episode_timeline(
+    episode: EpisodeAnalysis,
     duration_seconds: float,
-) -> VideoOverview:
-    """Drop unusable provider timestamps without losing the complete overview."""
+) -> EpisodeAnalysis:
+    """Drop unusable provider timestamps without losing the complete episode."""
     maximum = duration_seconds + 0.001
-    events = [event for event in overview.events if event.end_seconds <= maximum]
-    visible_text = [
+    observations = [
         observation
-        for observation in overview.visible_text
-        if observation.timestamp_seconds <= maximum
+        for observation in episode.observations
+        if observation.end_seconds <= maximum
     ]
-    removed = len(overview.events) - len(events) + len(overview.visible_text) - len(
-        visible_text
-    )
+    observations.sort(key=lambda item: (item.start_seconds, item.end_seconds))
+    removed = len(episode.observations) - len(observations)
     if removed == 0:
-        return overview
+        if observations == episode.observations:
+            return episode
+        return episode.model_copy(update={"observations": observations})
 
     note = (
         "Number of skipped observations with timestamps exceeding the "
         f"clip length: {removed} (clip time: {duration_seconds:.3f} s)."
     )
-    uncertainties = [*overview.uncertainties, note]
+    uncertainties = [*episode.uncertainties, note]
     if len(uncertainties) > VIDEO.max_uncertainties:
         uncertainties = uncertainties[-VIDEO.max_uncertainties :]
-    return overview.model_copy(
+    return episode.model_copy(
         update={
-            "events": events,
-            "visible_text": visible_text,
+            "observations": observations,
             "uncertainties": uncertainties,
         }
     )

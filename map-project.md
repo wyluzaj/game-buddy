@@ -45,7 +45,7 @@ buddy.main.main
 Completed sessions are processed at the next application startup. A failed memory update
 remains pending and does not block later sessions.
 
-### General video analysis
+### Episode video analysis
 
 ```text
 buddy.video.cli
@@ -56,12 +56,15 @@ buddy.video.cli
             -> SHA-256 recording key from bytes, UTC times, and conversation ID
             -> video.storage.create_video_segment
             -> video.storage.claim_video_segment_for_analysis
-            -> GeminiVideoAnalyzer.analyze_overview
+            -> GeminiVideoAnalyzer.analyze_episode
             -> validate every timestamp against segment duration
-            -> video.storage.save_video_report(mode=overview)
+            -> video.storage.save_video_report(mode=episode)
+            -> normalize observations into video_observations + FTS5
        -> video.context_service.process_video_report_context
             -> video.context_butler.build_video_context_prompt
             -> Video Context Butler Agent
+            -> persist an episode summary for historical recall
+            -> decide whether current gameplay state changed
             -> source validation
             -> video.storage.save_video_context_update
 ```
@@ -227,18 +230,18 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/memory/recall.py` | Bounded historical retrieval and reduction | Uses the memory index, Harness store, and Context Butler |
 | `buddy/memory/context_butler.py` | Small agent reducing recalled memory documents | Used only by `memory.recall.py` |
 | `buddy/video/models.py` | Video enums, dataclasses, legacy overview models, and detailed Episode Pydantic models | Shared contract for all video modules |
-| `buddy/video/analyzer.py` | Provider-neutral overview/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
+| `buddy/video/analyzer.py` | Provider-neutral episode/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
 | `buddy/video/gemini.py` | Gemini upload, polling, minimal provider-compatible JSON Schema generation, Pydantic parsing, and cleanup | Native provider adapter for episode, legacy overview, and detail modes; reports the failing provider stage |
 | `buddy/video/storage.py` | Versioned video schema, validated report/observation persistence, FTS5 episode search, game links, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
-| `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, removal of out-of-range provider timestamps with a diagnostic uncertainty, retry, and reuse | Connects `VideoAnalyzer` to `video.storage` without losing an otherwise valid overview |
-| `buddy/video/context_butler.py` | Replacement-state prompt construction and source validation | Used by `video.context_service.py` |
-| `buddy/video/context_service.py` | Idempotent overview-to-context reduction | Connects storage to Video Context Butler |
-| `buddy/video/pipeline.py` | End-to-end overview and context-update orchestration | Used by the manual CLI and future capture worker |
+| `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, episode timeline sanitization, retry, legacy-overview reuse, and persistence | Connects `VideoAnalyzer` to `video.storage` without losing an otherwise valid episode |
+| `buddy/video/context_butler.py` | Episode-summary and replacement-state prompt construction plus source validation | Used by `video.context_service.py` |
+| `buddy/video/context_service.py` | Idempotent episode-to-summary/current-context reduction, including late-report handling | Connects storage to Video Context Butler |
+| `buddy/video/pipeline.py` | End-to-end episode and context-update orchestration | Used by the manual CLI and future capture worker |
 | `buddy/video/context_injection.py` | Replaces prior gameplay state in chat history | Used by the terminal loop |
 | `buddy/video/detail_service.py` | Internal URI parsing, range validation, cache, and detailed reports | Used by the detail tool |
 | `buddy/video/detail_tool.py` | Main-agent tool for question-specific clip inspection | Creates a Gemini analyzer per invocation |
-| `buddy/video/session_memory.py` | Bounded source-aware video evidence for completed sessions | Used by shutdown and memory processing |
-| `buddy/video/cli.py` | Manual end-to-end analysis command | Composes SQLite, Gemini, pipeline, and terminal output |
+| `buddy/video/session_memory.py` | Bounded source-aware episode summaries for completed sessions | Used by shutdown and memory processing |
+| `buddy/video/cli.py` | Manual end-to-end episode analysis command | Composes SQLite, Gemini, pipeline, and terminal output |
 
 ## Test map
 
@@ -280,7 +283,8 @@ This map remains the source for module ownership and code-to-storage relationshi
 Implemented:
 
 - manual analysis of completed local video files;
-- general structured reports;
+- detailed structured episode timelines with searchable normalized observations;
+- durable brief descriptions plus bounded current gameplay state;
 - bounded current-screen context;
 - explicit injection into the matching chat session;
 - source-linked session and game memory;

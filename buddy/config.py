@@ -107,6 +107,7 @@ class VideoSettings:
     poll_interval_seconds: float = 2.0
     stored_error_chars: int = 2_000
     detail_question_chars: int = 500
+    episode_summary_chars: int = 1_500
     context_chars: int = 1_000
     context_sources: int = 5
     context_uncertainty_chars: int = 400

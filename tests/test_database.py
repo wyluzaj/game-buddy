@@ -196,6 +196,10 @@ def test_init_db_versions_and_migrates_legacy_video_schema(tmp_path):
         row["name"]
         for row in migrated.execute("PRAGMA table_info(video_reports)")
     }
+    context_columns = {
+        row["name"]
+        for row in migrated.execute("PRAGMA table_info(video_context_updates)")
+    }
     legacy_row = migrated.execute(
         "SELECT recording_key FROM video_segments WHERE id = 1"
     ).fetchone()
@@ -216,6 +220,7 @@ def test_init_db_versions_and_migrates_legacy_video_schema(tmp_path):
     assert "recording_key" in segment_columns
     assert "game_document_id" in segment_columns
     assert "request_key" in report_columns
+    assert "episode_summary" in context_columns
     assert "'episode'" in report_schema
     assert legacy_row["recording_key"] == "legacy:1"
     assert second.id != 1

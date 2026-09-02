@@ -76,6 +76,7 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS video_context_updates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             report_id INTEGER NOT NULL UNIQUE,
+            episode_summary TEXT NOT NULL DEFAULT '',
             changed INTEGER NOT NULL CHECK (changed IN (0, 1)),
             context TEXT NOT NULL DEFAULT '',
             sources_json TEXT NOT NULL DEFAULT '[]',
@@ -108,6 +109,17 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    context_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(video_context_updates)")
+    }
+    if "episode_summary" not in context_columns:
+        conn.execute(
+            """
+            ALTER TABLE video_context_updates
+            ADD COLUMN episode_summary TEXT NOT NULL DEFAULT ''
+            """
+        )
     conn.execute(
         """
         CREATE VIRTUAL TABLE IF NOT EXISTS video_observation_search USING fts5(
@@ -205,7 +217,6 @@ def create_video_segment(
         start,
         end,
         conversation_id,
-        game_document_id,
     )
 
     now = datetime.now(timezone.utc)
@@ -610,12 +621,14 @@ def save_video_context_update(
     conn: sqlite3.Connection,
     *,
     report_id: int,
+    episode_summary: str = "",
     changed: bool,
     context: str,
     sources: list[str],
     uncertainty: str | None = None,
 ) -> VideoContextUpdate:
     """Persist one idempotency marker and optional replacement context state."""
+    normalized_summary = episode_summary.strip()
     normalized_context = context.strip()
     normalized_sources = list(dict.fromkeys(source.strip() for source in sources if source.strip()))
     if changed and (not normalized_context or not normalized_sources):
@@ -630,16 +643,18 @@ def save_video_context_update(
             """
             INSERT INTO video_context_updates (
                 report_id,
+                episode_summary,
                 changed,
                 context,
                 sources_json,
                 uncertainty,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 report_id,
+                normalized_summary,
                 int(changed),
                 normalized_context,
                 json.dumps(normalized_sources, ensure_ascii=False),
@@ -997,6 +1012,7 @@ def _context_update_from_row(row: sqlite3.Row) -> VideoContextUpdate:
         return VideoContextUpdate(
             id=row["id"],
             report_id=row["report_id"],
+            episode_summary=row["episode_summary"],
             changed=changed,
             context=row["context"],
             sources=sources,
@@ -1030,7 +1046,6 @@ def _metadata_recording_key(
     started_at: datetime,
     ended_at: datetime,
     conversation_id: int | None,
-    game_document_id: int | None,
 ) -> str:
     raw = "\0".join(
         (
@@ -1038,7 +1053,6 @@ def _metadata_recording_key(
             started_at.isoformat(),
             ended_at.isoformat(),
             str(conversation_id),
-            str(game_document_id),
         )
     )
     return sha256(raw.encode()).hexdigest()
@@ -1168,6 +1182,7 @@ def _migrate_legacy_video_schema(conn: sqlite3.Connection) -> None:
                 CREATE TABLE video_context_updates_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     report_id INTEGER NOT NULL UNIQUE,
+                    episode_summary TEXT NOT NULL DEFAULT '',
                     changed INTEGER NOT NULL CHECK (changed IN (0, 1)),
                     context TEXT NOT NULL DEFAULT '',
                     sources_json TEXT NOT NULL DEFAULT '[]',
@@ -1182,10 +1197,10 @@ def _migrate_legacy_video_schema(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """
                 INSERT INTO video_context_updates_new (
-                    id, report_id, changed, context, sources_json,
+                    id, report_id, episode_summary, changed, context, sources_json,
                     uncertainty, created_at, injected_at
                 )
-                SELECT id, report_id, changed, context, sources_json,
+                SELECT id, report_id, '', changed, context, sources_json,
                        uncertainty, created_at, injected_at
                 FROM video_context_updates
                 """

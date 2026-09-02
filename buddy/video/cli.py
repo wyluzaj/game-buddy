@@ -121,17 +121,18 @@ def _print_outcome(outcome: VideoProcessingOutcome) -> None:
             else "created"
         )
     )
-    print(f"Summary: {analysis.overview.summary}")
-    if analysis.overview.events:
-        print("Events:")
-        for event in analysis.overview.events:
+    if outcome.context_update.episode_summary:
+        print(f"Episode summary: {outcome.context_update.episode_summary}")
+    if analysis.episode.observations:
+        print("Episode timeline:")
+        for observation in analysis.episode.observations:
             print(
-                f"  - {event.start_seconds:.1f}-{event.end_seconds:.1f}s "
-                f"[{event.importance.value}]: {event.description}"
+                f"  - {observation.start_seconds:.1f}-"
+                f"{observation.end_seconds:.1f}s: {observation.description}"
             )
-    if analysis.overview.uncertainties:
+    if analysis.episode.uncertainties:
         print("Uncertainties:")
-        for uncertainty in analysis.overview.uncertainties:
+        for uncertainty in analysis.episode.uncertainties:
             print(f"  - {uncertainty}")
     context_update = outcome.context_update
     print(
