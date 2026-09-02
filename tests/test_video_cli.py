@@ -10,6 +10,8 @@ def test_parser_uses_central_configuration_defaults() -> None:
     assert args.video_path == Path("clip.mp4")
     assert args.duration_seconds == VIDEO.manual_duration_seconds
     assert args.database == STORAGE.chat_database_path
+    assert args.memory_database == STORAGE.memory_database_path
+    assert args.game is None
 
 
 def test_main_rejects_non_positive_duration(tmp_path: Path, capsys) -> None:
@@ -56,12 +58,18 @@ def test_main_runs_analysis_and_prints_outcome(tmp_path: Path, monkeypatch) -> N
             "7",
             "--database",
             str(database),
+            "--memory-database",
+            str(tmp_path / "memory.db"),
+            "--game",
+            "Big Walk",
         ]
     )
 
     assert exit_code == 0
     assert captured["video_path"] == clip.resolve()
     assert captured["conversation_id"] == 7
+    assert captured["game"] == "Big Walk"
+    assert captured["memory_database"] == str(tmp_path / "memory.db")
     assert captured["outcome"] is sentinel
     assert database.is_file()
 

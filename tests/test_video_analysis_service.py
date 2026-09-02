@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from buddy.memory.index import MemoryDocumentType, index_memory_document
 from buddy.video.analysis_service import (
     VideoSegmentStateError,
     analyze_video_segment,
@@ -64,6 +65,17 @@ def _episode(description: str) -> EpisodeAnalysis:
                 description=description,
             )
         ]
+    )
+
+
+def _game_document(db, title: str = "Big Walk"):
+    return index_memory_document(
+        db,
+        document_type=MemoryDocumentType.GAME,
+        path="main/games/big-walk.md",
+        title=title,
+        summary=f"Pamięć dotycząca gry {title}.",
+        body=f"# {title}\n",
     )
 
 
@@ -211,6 +223,50 @@ def test_overwritten_file_path_creates_a_new_recording(db, tmp_path):
     assert second.episode.observations[0].description == "Drugie nagranie."
     assert db.execute("SELECT COUNT(*) FROM video_segments").fetchone()[0] == 2
     assert len(analyzer.calls) == 2
+
+
+def test_high_confidence_game_detection_links_existing_profile(db, tmp_path):
+    game = _game_document(db)
+    video_path = tmp_path / "detected-game.mp4"
+    video_path.write_bytes(b"gameplay clip")
+    started_at = datetime(2026, 8, 29, 18, 0, tzinfo=timezone.utc)
+    episode = _episode("Eksploracja.").model_copy(
+        update={"possible_game": "  big WALK ", "confidence": 0.95}
+    )
+
+    outcome = asyncio.run(
+        register_and_analyze_video(
+            db,
+            StubVideoAnalyzer([episode]),
+            file_path=video_path,
+            started_at=started_at,
+            ended_at=started_at + timedelta(minutes=2),
+        )
+    )
+
+    assert outcome.segment.game_document_id == game.id
+
+
+def test_low_confidence_game_detection_does_not_link_profile(db, tmp_path):
+    _game_document(db)
+    video_path = tmp_path / "uncertain-game.mp4"
+    video_path.write_bytes(b"gameplay clip")
+    started_at = datetime(2026, 8, 29, 18, 0, tzinfo=timezone.utc)
+    episode = _episode("Eksploracja.").model_copy(
+        update={"possible_game": "Big Walk", "confidence": 0.6}
+    )
+
+    outcome = asyncio.run(
+        register_and_analyze_video(
+            db,
+            StubVideoAnalyzer([episode]),
+            file_path=video_path,
+            started_at=started_at,
+            ended_at=started_at + timedelta(minutes=2),
+        )
+    )
+
+    assert outcome.segment.game_document_id is None
 
 
 @pytest.mark.parametrize(

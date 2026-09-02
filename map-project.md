@@ -49,6 +49,7 @@ remains pending and does not block later sessions.
 
 ```text
 buddy.video.cli
+  -> optional --game creates/reuses a confirmed game memory profile
   -> database.init_db
   -> video.gemini.GeminiVideoAnalyzer
   -> video.pipeline.process_video_file
@@ -60,6 +61,7 @@ buddy.video.cli
             -> validate every timestamp against segment duration
             -> video.storage.save_video_report(mode=episode)
             -> normalize observations into video_observations + FTS5
+            -> link a pre-existing exact game profile when provider confidence >= 0.9
        -> video.context_service.process_video_report_context
             -> video.context_butler.build_video_context_prompt
             -> Video Context Butler Agent

@@ -13,6 +13,8 @@ from pydantic_ai.exceptions import AgentRunError
 
 from buddy.config import STORAGE, VIDEO
 from buddy.database import init_db
+from buddy.memory.game import ensure_game_document
+from buddy.memory.long_term import create_long_term_memory
 from buddy.video.analyzer import VideoAnalysisError
 from buddy.video.context_butler import VideoContextButler, build_video_context_butler
 from buddy.video.gemini import GeminiVideoAnalyzer
@@ -37,9 +39,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional existing conversation ID to associate with the segment.",
     )
     parser.add_argument(
+        "--game",
+        default=None,
+        help="Optional game title used to create/reuse and link its memory profile.",
+    )
+    parser.add_argument(
         "--database",
         default=STORAGE.chat_database_path,
         help="SQLite database path (default: data/chatbot.db).",
+    )
+    parser.add_argument(
+        "--memory-database",
+        default=STORAGE.memory_database_path,
+        help="Harness Memory database path (default: data/memory.db).",
     )
     return parser
 
@@ -69,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
                 started_at=started_at,
                 ended_at=ended_at,
                 conversation_id=args.conversation_id,
+                game=args.game,
+                memory_database=args.memory_database,
             )
         )
     except (
@@ -94,7 +108,14 @@ async def _run_analysis(
     started_at: datetime,
     ended_at: datetime,
     conversation_id: int | None,
+    game: str | None,
+    memory_database: str | Path,
 ) -> VideoProcessingOutcome:
+    game_document_id = None
+    if game is not None:
+        memory = create_long_term_memory(memory_database)
+        game_document = await ensure_game_document(conn, memory, game)
+        game_document_id = game_document.id
     context_butler = build_video_context_butler()
     async with GeminiVideoAnalyzer() as analyzer:
         return await process_video_file(
@@ -105,6 +126,7 @@ async def _run_analysis(
             started_at=started_at,
             ended_at=ended_at,
             conversation_id=conversation_id,
+            game_document_id=game_document_id,
         )
 
 
@@ -112,6 +134,8 @@ def _print_outcome(outcome: VideoProcessingOutcome) -> None:
     analysis = outcome.analysis
     print(f"Segment: {analysis.segment.id} ({analysis.segment.source_uri})")
     print(f"Status: {analysis.segment.status.value}")
+    if analysis.segment.game_document_id is not None:
+        print(f"Game profile id: {analysis.segment.game_document_id}")
     print(f"Model: {analysis.report.provider}/{analysis.report.model_name}")
     print(
         "Report: "

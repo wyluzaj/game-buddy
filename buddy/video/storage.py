@@ -322,6 +322,25 @@ def assign_video_segment_game(
     return updated
 
 
+def find_game_document_id_by_title(
+    conn: sqlite3.Connection,
+    title: str,
+) -> int | None:
+    """Return one exact indexed game-title match, never an ambiguous guess."""
+    normalized = " ".join(title.split()).casefold()
+    if not normalized:
+        return None
+    rows = conn.execute(
+        """
+        SELECT id, title
+        FROM memory_documents
+        WHERE document_type = 'game'
+        """
+    ).fetchall()
+    matches = [row["id"] for row in rows if row["title"].casefold() == normalized]
+    return matches[0] if len(matches) == 1 else None
+
+
 def claim_video_segment_for_analysis(
     conn: sqlite3.Connection,
     segment_id: int,

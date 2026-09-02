@@ -114,6 +114,7 @@ class VideoSettings:
     session_observations: int = 50
     session_observation_chars: int = 30_000
     manual_duration_seconds: float = 120.0
+    game_detection_confidence: float = 0.9
     max_episode_observations: int = 120
     max_observation_objects: int = 30
     max_observation_texts: int = 20

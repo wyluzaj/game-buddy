@@ -24,6 +24,7 @@ from buddy.video.storage import (
     assign_video_segment_game,
     claim_video_segment_for_analysis,
     create_video_segment,
+    find_game_document_id_by_title,
     get_video_reports,
     get_video_segment,
     get_video_segment_by_recording_key,
@@ -93,7 +94,30 @@ async def register_and_analyze_video(
             game_document_id=game_document_id,
             recording_key=recording_key,
         )
-    return await analyze_video_segment(conn, analyzer, segment.id)
+    outcome = await analyze_video_segment(conn, analyzer, segment.id)
+    if (
+        outcome.segment.game_document_id is None
+        and outcome.episode.possible_game
+        and outcome.episode.confidence is not None
+        and outcome.episode.confidence >= VIDEO.game_detection_confidence
+    ):
+        inferred_game_id = find_game_document_id_by_title(
+            conn,
+            outcome.episode.possible_game,
+        )
+        if inferred_game_id is not None:
+            assigned = assign_video_segment_game(
+                conn,
+                outcome.segment.id,
+                inferred_game_id,
+            )
+            outcome = VideoAnalysisOutcome(
+                segment=assigned,
+                report=outcome.report,
+                episode=outcome.episode,
+                reused_existing_report=outcome.reused_existing_report,
+            )
+    return outcome
 
 
 async def analyze_video_segment(
