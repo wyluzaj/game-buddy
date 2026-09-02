@@ -235,4 +235,7 @@ def test_overview_timestamps_outside_segment_are_dropped(
     assert outcome.segment.status is VideoSegmentStatus.COMPLETED
     assert outcome.overview.events == []
     assert outcome.overview.visible_text == []
-    assert "długość klipu: 1" in outcome.overview.uncertainties[-1]
+    assert outcome.overview.uncertainties[-1] == (
+        "Number of skipped observations with timestamps exceeding the "
+        "clip length: 1 (clip time: 120.000 s)."
+    )
