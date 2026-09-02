@@ -26,6 +26,12 @@ from buddy.memory.index import (
     get_session_game_documents,
     search_memory_documents,
 )
+from buddy.video.models import StoredEpisodeObservation, StoredEpisodeSummary
+from buddy.video.storage import (
+    get_recent_episode_summaries,
+    get_video_segment,
+    search_episode_observations,
+)
 
 
 class MemoryRecallType(str, Enum):
@@ -34,13 +40,14 @@ class MemoryRecallType(str, Enum):
     ALL = "all"
     GAME = "game"
     SESSION = "session"
+    VIDEO = "video"
 
 
 class RecalledMemory(BaseModel):
     """One bounded memory document returned to the model."""
 
     path: str
-    document_type: MemoryDocumentType
+    document_type: str
     title: str
     occurred_at: str | None
     games: list[str]
@@ -74,7 +81,7 @@ class MemoryRecallService:
         date_to: str | None = None,
         limit: int = 3,
     ) -> MemoryRecallResult:
-        """Return a bounded profile/session set matching explicit filters."""
+        """Return bounded memory documents and episode evidence."""
         if not 1 <= limit <= MEMORY.recall_results:
             raise ValueError(
                 f"Recall limit must be between 1 and {MEMORY.recall_results}."
@@ -100,6 +107,49 @@ class MemoryRecallService:
 
         remaining = limit - len(documents)
         used_recent_fallback = False
+        video_matches: list[RecalledMemory] = []
+        if remaining > 0 and memory_type in (
+            MemoryRecallType.ALL,
+            MemoryRecallType.VIDEO,
+        ):
+            if normalized_query is not None:
+                observations = search_episode_observations(
+                    self._conn,
+                    query=normalized_query,
+                    game_document_id=(
+                        game_document.id if game_document is not None else None
+                    ),
+                    occurred_from=occurred_from,
+                    occurred_before=occurred_before,
+                    limit=remaining,
+                )
+                video_matches = [
+                    self._read_video_observation(observation)
+                    for observation in observations
+                ]
+            if not video_matches and game_document is not None:
+                summaries = get_recent_episode_summaries(
+                    self._conn,
+                    game_document_id=game_document.id,
+                    occurred_from=occurred_from,
+                    occurred_before=occurred_before,
+                    limit=remaining,
+                )
+                video_matches = [
+                    self._read_episode_summary(summary) for summary in summaries
+                ]
+                used_recent_fallback = bool(normalized_query and summaries)
+            elif normalized_query is None:
+                summaries = get_recent_episode_summaries(
+                    self._conn,
+                    occurred_from=occurred_from,
+                    occurred_before=occurred_before,
+                    limit=remaining,
+                )
+                video_matches = [
+                    self._read_episode_summary(summary) for summary in summaries
+                ]
+            remaining -= len(video_matches)
         if remaining > 0 and memory_type in (
             MemoryRecallType.ALL,
             MemoryRecallType.SESSION,
@@ -145,26 +195,85 @@ class MemoryRecallService:
                 )
             )
 
-        matches = [
+        memory_matches = [
             await self._read_document(document, normalized_query)
             for document in documents
         ]
+        matches = [*memory_matches, *video_matches]
         if not matches:
             return MemoryRecallResult(
                 message="No memory documents matched the supplied filters.",
                 matches=[],
             )
-        message = f"Found {len(matches)} bounded memory document(s)."
+        message = f"Found {len(matches)} bounded memory/video source(s)."
         if used_recent_fallback:
             message += (
-                " No exact text match was found; returning the most recent "
-                "sessions for the selected game."
+                " No exact text match was found; returning recent evidence "
+                "for the selected game."
             )
         return MemoryRecallResult(
             message=message,
             used_recent_fallback=used_recent_fallback,
             matches=matches,
         )
+
+    def _read_video_observation(
+        self,
+        observation: StoredEpisodeObservation,
+    ) -> RecalledMemory:
+        segment = get_video_segment(self._conn, observation.segment_id)
+        if segment is None:
+            raise RuntimeError("A searched video observation lost its segment.")
+        game_title = self._game_title(segment.game_document_id)
+        details = [
+            f"Activity: {observation.activity}",
+            f"Location: {observation.location or '(unknown)'}",
+            f"Description: {observation.description}",
+        ]
+        if observation.visible_objects:
+            details.append("Visible objects: " + ", ".join(observation.visible_objects))
+        if observation.visible_text:
+            details.append("Visible text: " + ", ".join(observation.visible_text))
+        if observation.uncertainties:
+            details.append("Uncertainties: " + ", ".join(observation.uncertainties))
+        return RecalledMemory(
+            path=observation.source_uri,
+            document_type="video_observation",
+            title=(
+                f"Episode {observation.segment_id}, "
+                f"{observation.start_seconds:g}-{observation.end_seconds:g}s"
+            ),
+            occurred_at=segment.started_at.isoformat(),
+            games=[game_title] if game_title else [],
+            summary=observation.description,
+            content="\n".join(details),
+            truncated=False,
+        )
+
+    @staticmethod
+    def _read_episode_summary(summary: StoredEpisodeSummary) -> RecalledMemory:
+        return RecalledMemory(
+            path=summary.source_uri,
+            document_type="episode_summary",
+            title=f"Episode {summary.segment_id}",
+            occurred_at=summary.started_at.isoformat(),
+            games=[summary.game_title] if summary.game_title else [],
+            summary=summary.summary,
+            content=summary.summary,
+            truncated=False,
+        )
+
+    def _game_title(self, game_document_id: int | None) -> str | None:
+        if game_document_id is None:
+            return None
+        row = self._conn.execute(
+            """
+            SELECT title FROM memory_documents
+            WHERE id = ? AND document_type = 'game'
+            """,
+            (game_document_id,),
+        ).fetchone()
+        return row["title"] if row is not None else None
 
     def _resolve_game(
         self,
@@ -307,12 +416,14 @@ def create_recall_memory_tool(
         date_to: str | None = None,
         limit: int = 3,
     ) -> ContextButlerResult:
-        """Recall and reduce prior game/session memory for one question.
+        """Recall and reduce prior game, session, or video memory for one question.
 
         `question` is the user's complete information need. Use short distinctive
         keywords in `query`. `game` should be a title explicitly known from the
-        conversation. Dates use YYYY-MM-DD and are inclusive. Only compact,
-        source-validated evidence is returned to the parent agent.
+        conversation. Use `memory_type="video"` for earlier gameplay footage;
+        exact observations are preferred and recent episode summaries are the
+        bounded fallback for a known game. Dates use YYYY-MM-DD and are inclusive.
+        Only compact, source-validated evidence is returned to the parent agent.
         """
         return await coordinator.recall(
             question=question,

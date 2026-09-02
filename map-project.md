@@ -126,12 +126,21 @@ Future recall uses a bounded retrieval pipeline:
 
 ```text
 recall_memory
-  -> memory.index.search_memory_documents
-  -> MemoryRecallService reads selected logical Markdown documents
-  -> Context Butler reduces the retrieved documents
+  -> memory_type=video
+       -> video.storage.search_episode_observations (FTS5, timestamped evidence)
+       -> if no exact match and a game is known:
+            video.storage.get_recent_episode_summaries (bounded fallback)
+  -> memory_type=game/session/all
+       -> memory.index.search_memory_documents
+       -> MemoryRecallService reads selected logical Markdown documents
+  -> Context Butler reduces the retrieved documents and/or video evidence
   -> source allow-list validation
   -> a small source-linked answer returns to the main agent
 ```
+
+The main agent must search stored episode evidence before requesting a new Gemini
+detail analysis. A detail request is allowed only for one concrete `video://` source
+returned by current context or recall; the agent never scans an unbounded recording set.
 
 Global memory is based on explicit user statements. Video observations may enrich a
 confirmed game's profile and session report, but they cannot become global user facts by
@@ -185,7 +194,8 @@ Main responsibilities:
 The database uses `PRAGMA user_version`. Schema version 2 migrated the original path-unique
 video tables to recording keys and added indexed detail request keys. Version 3 adds the
 memory-processing journal. Version 4 adds detailed episode reports, normalized searchable
-observations, and optional segment-to-game links. Existing segment/report/context IDs are preserved. Storage reads
+observations, and optional segment-to-game links. Version 5 adds durable episode summaries
+to context updates. Existing segment/report/context IDs are preserved. Storage reads
 validate report JSON and context-source JSON before returning domain objects.
 
 ### `data/memory.db`
@@ -227,7 +237,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/memory/journal.py` | Durable cross-database checkpoints and retry payloads | Lets pending-memory processing resume after session, global, or game stages |
 | `buddy/memory/game.py` | Game-name normalization, collision-safe paths, documents, and relations | Used by memory analysis and recall; adds a title hash only when two distinct titles share a slug |
 | `buddy/memory/game_analysis.py` | Source-aware updates of allowed `main/games/*.md` profiles | Receives explicit user evidence and video observations |
-| `buddy/memory/recall.py` | Bounded historical retrieval and reduction | Uses the memory index, Harness store, and Context Butler |
+| `buddy/memory/recall.py` | Bounded historical retrieval and reduction for game profiles, sessions, episode summaries, and timestamped video observations | Uses the memory/video indexes, Harness store, and Context Butler |
 | `buddy/memory/context_butler.py` | Small agent reducing recalled memory documents | Used only by `memory.recall.py` |
 | `buddy/video/models.py` | Video enums, dataclasses, legacy overview models, and detailed Episode Pydantic models | Shared contract for all video modules |
 | `buddy/video/analyzer.py` | Provider-neutral episode/detail protocols and domain errors | Implemented by Gemini; consumed by application services |

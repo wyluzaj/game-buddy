@@ -14,6 +14,7 @@ from buddy.video.models import (
     EpisodeAnalysis,
     EpisodeObservation,
     StoredEpisodeObservation,
+    StoredEpisodeSummary,
     VideoContextUpdate,
     VideoDetailAnalysis,
     VideoOverview,
@@ -615,6 +616,68 @@ def search_episode_observations(
         parameters,
     ).fetchall()
     return [_episode_observation_from_row(row) for row in rows]
+
+
+def get_recent_episode_summaries(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: int | None = None,
+    game_document_id: int | None = None,
+    occurred_from: datetime | None = None,
+    occurred_before: datetime | None = None,
+    limit: int = 5,
+) -> list[StoredEpisodeSummary]:
+    """Return recent durable brief descriptions under explicit filters."""
+    if not 1 <= limit <= 100:
+        raise ValueError("Episode summary limit must be between 1 and 100.")
+    filters = ["updates.episode_summary != ''"]
+    parameters: list[object] = []
+    if conversation_id is not None:
+        filters.append("segments.conversation_id = ?")
+        parameters.append(conversation_id)
+    if game_document_id is not None:
+        _validate_game_document_id(conn, game_document_id)
+        filters.append("segments.game_document_id = ?")
+        parameters.append(game_document_id)
+    if occurred_from is not None:
+        filters.append("segments.started_at >= ?")
+        parameters.append(_normalize_datetime(occurred_from).isoformat())
+    if occurred_before is not None:
+        filters.append("segments.started_at < ?")
+        parameters.append(_normalize_datetime(occurred_before).isoformat())
+    parameters.append(limit)
+    rows = conn.execute(
+        f"""
+        SELECT segments.id AS segment_id,
+               segments.conversation_id,
+               segments.game_document_id,
+               games.title AS game_title,
+               segments.started_at,
+               segments.ended_at,
+               updates.episode_summary
+        FROM video_context_updates AS updates
+        JOIN video_reports AS reports ON reports.id = updates.report_id
+        JOIN video_segments AS segments ON segments.id = reports.segment_id
+        LEFT JOIN memory_documents AS games
+          ON games.id = segments.game_document_id
+        WHERE {' AND '.join(filters)}
+        ORDER BY segments.ended_at DESC, segments.id DESC
+        LIMIT ?
+        """,
+        parameters,
+    ).fetchall()
+    return [
+        StoredEpisodeSummary(
+            segment_id=row["segment_id"],
+            conversation_id=row["conversation_id"],
+            game_document_id=row["game_document_id"],
+            game_title=row["game_title"],
+            started_at=_parse_datetime(row["started_at"]),
+            ended_at=_parse_datetime(row["ended_at"]),
+            summary=row["episode_summary"],
+        )
+        for row in rows
+    ]
 
 
 def save_video_context_update(

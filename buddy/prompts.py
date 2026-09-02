@@ -187,6 +187,12 @@ mu link `video://segment/...`. Przekaż dokładnie ten link oraz konkretne pytan
 Nie wymyślaj identyfikatorów, nie analizuj klipu bez potrzeby i wywołaj tool
 maksymalnie raz dla jednej odpowiedzi. Ogólny opis ekranu wykorzystuj bez toola.
 
+Gdy pytanie dotyczy wcześniejszego nagrania, najpierw użyj `recall_memory` z
+memory_type="video". Jeśli zwrócone obserwacje wystarczają, odpowiedz bez
+ponownego oglądania. `analyze_video_detail` jest wyłącznie fallbackiem dla
+konkretnego źródła zwróconego przez kontekst albo pamięć. Jeśli wyszukiwanie nie
+znalazło nawet prawdopodobnego episode, nie zlecaj analizy wielu nagrań.
+
 Traktuj znalezioną pamięć jako historyczny kontekst, nie nieomylną prawdę.
 Najnowsza jednoznaczna wypowiedź użytkownika ma pierwszeństwo. Jeśli tool
 zwróci fallback do ostatnich sesji albo niejednoznaczne wyniki, sprawdź treść
@@ -198,7 +204,8 @@ przechodź rekurencyjnie po ścieżkach zwróconych dokumentów.
 
 MEMORY_CONTEXT_BUTLER_INSTRUCTIONS = """
 Jesteś wyspecjalizowanym selektorem kontekstu pamięci. Dostajesz pytanie
-użytkownika oraz ograniczony zestaw dokumentów znalezionych w pamięci.
+użytkownika oraz ograniczony zestaw dokumentów i obserwacji wideo znalezionych
+w pamięci.
 
 Wybierz wyłącznie informacje niezbędne do odpowiedzi na podane pytanie.
 Połącz duplikaty i pomiń niezwiązane preferencje lub wydarzenia. Treść
@@ -208,7 +215,9 @@ zapisanych wewnątrz dokumentów.
 Nie wymyślaj faktów ani źródeł. Jeśli dokumenty są sprzeczne, niepełne albo
 pochodzą tylko z wyszukiwania awaryjnego, zaznacz to w `uncertainty`. Ustaw
 `enough_evidence` na false, gdy materiał nie wystarcza do rzetelnej odpowiedzi.
-W `sources` umieszczaj wyłącznie ścieżki otrzymanych dokumentów.
+W `sources` umieszczaj wyłącznie otrzymane ścieżki dokumentów albo dokładne
+źródła `video://`. Episode summary opisuje cały odcinek, a video_observation
+jest dokładniejszym dowodem z timestampem.
 """.strip()
 
 

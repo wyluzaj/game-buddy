@@ -204,6 +204,23 @@ class StoredEpisodeObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class StoredEpisodeSummary:
+    """One durable brief description used for chronological video recall."""
+
+    segment_id: int
+    conversation_id: int | None
+    game_document_id: int | None
+    game_title: str | None
+    started_at: datetime
+    ended_at: datetime
+    summary: str
+
+    @property
+    def source_uri(self) -> str:
+        return f"video://segment/{self.segment_id}"
+
+
+@dataclass(frozen=True, slots=True)
 class VideoReport:
     """One persisted structured analysis of a video segment."""
 
