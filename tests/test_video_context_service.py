@@ -274,7 +274,7 @@ def test_invented_video_source_is_rejected(db, tmp_path):
     assert update.context == ""
     assert update.sources == []
     assert update.uncertainty is not None
-    assert "nieznane źródło" in update.uncertainty
+    assert "unknown video source" in update.uncertainty
 
 
 def test_late_older_report_cannot_replace_newer_video_context(db, tmp_path):
@@ -328,6 +328,6 @@ def test_late_older_report_cannot_replace_newer_video_context(db, tmp_path):
 
     assert skipped.changed is False
     assert skipped.uncertainty is not None
-    assert "spóźniony raport" in skipped.uncertainty
+    assert "late report" in skipped.uncertainty
     assert skipped.episode_summary == "Gracz był jeszcze przed mostem."
     assert len(older_butler.prompts) == 1

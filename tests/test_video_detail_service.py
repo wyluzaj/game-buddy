@@ -152,10 +152,10 @@ def test_out_of_range_detail_evidence_is_removed_and_reported(db, tmp_path):
     )
 
     assert result.answer == (
-        "Nie udało się potwierdzić odpowiedzi w żądanym zakresie nagrania."
+        "The answer could not be confirmed in the requested video range."
     )
     assert result.sources == [f"{segment.source_uri}?t=10-20"]
-    assert "Odrzucono 1 obserwację" in result.uncertainties[-1]
+    assert "Dropped 1 observation" in result.uncertainties[-1]
     reports = get_video_reports(
         db,
         segment.id,
@@ -198,7 +198,7 @@ def test_valid_detail_evidence_survives_invalid_provider_timestamp(db, tmp_path)
 
     assert result.answer == "W zakresie był czerwony balon."
     assert result.sources == [f"{segment.source_uri}?t=12-13"]
-    assert "Odrzucono 1 obserwację" in result.uncertainties[-1]
+    assert "Dropped 1 observation" in result.uncertainties[-1]
 
 
 def test_minute_decimal_provider_timestamps_are_normalized(db, tmp_path):
@@ -236,7 +236,7 @@ def test_minute_decimal_provider_timestamps_are_normalized(db, tmp_path):
         f"{segment.source_uri}?t=7-8",
         f"{segment.source_uri}?t=15-16",
     ]
-    assert "Znormalizowano timestampy" in result.uncertainties[-1]
+    assert "Normalized provider timestamps" in result.uncertainties[-1]
 
 
 def test_concurrent_identical_detail_requests_call_provider_once(db, tmp_path):

@@ -78,7 +78,7 @@ async def persist_session_document(
         conn,
         document_type=MemoryDocumentType.SESSION,
         path=path,
-        title=f"Sesja {conversation_id} — {ended_at.date().isoformat()}",
+        title=f"Session {conversation_id} — {ended_at.date().isoformat()}",
         summary=_index_summary(session_context),
         body=content,
         conversation_id=conversation_id,

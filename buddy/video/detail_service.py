@@ -180,12 +180,12 @@ def _sanitize_and_build_sources(
         f"{_format_seconds(requested.end_seconds)}s"
     )
     uncertainty = (
-        f"Odrzucono {dropped_count} obserwację(-e) spoza żądanego zakresu "
+        f"Dropped {dropped_count} observation(s) outside the requested range "
         f"{range_label}."
     )
     answer = analysis.answer
     if not valid_observations:
-        answer = "Nie udało się potwierdzić odpowiedzi w żądanym zakresie nagrania."
+        answer = "The answer could not be confirmed in the requested video range."
     sanitized = analysis.model_copy(
         update={
             "answer": answer,
@@ -224,7 +224,7 @@ def _normalize_minute_decimal_timestamps(
                 }
             )
         )
-    note = "Znormalizowano timestampy zwrócone przez dostawcę w formacie mm.ss."
+    note = "Normalized provider timestamps returned in mm.ss notation."
     return analysis.model_copy(
         update={
             "observations": observations,

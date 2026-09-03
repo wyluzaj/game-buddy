@@ -73,7 +73,7 @@ async def ensure_game_document(
         document_type=MemoryDocumentType.GAME,
         path=path,
         title=title,
-        summary=f"Pamięć dotycząca gry {title}.",
+        summary=f"Memory for the game {title}.",
         body=content,
     )
 

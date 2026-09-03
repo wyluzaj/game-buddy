@@ -240,7 +240,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/main.py` | Application composition, terminal loop, startup consolidation, session shutdown | Coordinates chat, memory, video injection, and persistence |
 | `buddy/config.py` | Central immutable sections for models, runtime diagnostics, response language, agent, storage, memory, video, and MIME types | Used by all factories, services, models, and entry points |
 | `buddy/agent.py` | Main Pydantic AI agent factory | Registers independent behavior and response-language instructions, compaction, global memory, recall, video detail, and web search |
-| `buddy/prompts.py` | Central LLM instructions, the overridable response-language policy, and prompt templates | Used by chat, memory, Butler, and video analyzers |
+| `buddy/prompts.py` | Central English LLM instructions, canonical-memory language rules, the overridable response-language policy, and prompt templates | Used by chat, memory, Butler, and video analyzers; exact OCR and proper names retain their source language |
 | `buddy/database.py` | SQLite connection, conversations, and raw message batches | Initializes memory-index and video-storage schemas |
 | `buddy/memory/compaction.py` | Time-window short-memory compaction and history formatting | Main agent capability and session-memory formatter |
 | `buddy/memory/long_term.py` | Injection-only Harness Memory backed by SQLite | Used by chat, recall, and post-session analyzers |

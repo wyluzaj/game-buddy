@@ -304,7 +304,7 @@ def test_coordinator_rejects_an_invented_source(db):
     assert result.context == ""
     assert result.sources == []
     assert result.uncertainty is not None
-    assert "spoza wyników" in result.uncertainty
+    assert "outside the search results" in result.uncertainty
 
 
 def test_coordinator_skips_delegate_when_nothing_was_found(db):

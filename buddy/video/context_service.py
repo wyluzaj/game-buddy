@@ -85,8 +85,8 @@ async def process_video_report_context(
             context="",
             sources=[],
             uncertainty=(
-                "Pominięto spóźniony raport, ponieważ nowszy fragment wideo "
-                "zaktualizował już bieżący kontekst."
+                "A late report was skipped because a newer video segment had "
+                "already updated the current context."
             ),
         )
     try:
