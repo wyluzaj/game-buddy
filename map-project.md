@@ -133,7 +133,9 @@ Future recall uses a bounded retrieval pipeline:
 ```text
 recall_memory
   -> memory_type=video
-       -> video.storage.search_episode_observations (FTS5, timestamped evidence)
+       -> video.storage.search_episode_observations
+            -> precise FTS5 AND query
+            -> bounded OR fallback when added words produce no result
        -> if no exact match and a game is known:
             video.storage.get_recent_episode_summaries (bounded fallback)
   -> memory_type=game/session/all

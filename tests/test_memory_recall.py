@@ -361,6 +361,36 @@ def test_video_recall_returns_exact_timestamped_episode_observation(db):
     assert result.matches[0].games == ["Big Walk"]
 
 
+def test_video_recall_relaxes_noisy_query_without_losing_game_filter(db):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        _, game = await _add_session(
+            db,
+            memory,
+            conversation_id=1,
+            game_name="Big Walk",
+            day=20,
+            context="User: Gram w Big Walk.",
+        )
+        segment = _add_episode(
+            db,
+            conversation_id=1,
+            game_document_id=game.id,
+        )
+        result = await MemoryRecallService(db, memory).recall(
+            query="Big Walk czerwony balon timestamp",
+            game="Big Walk",
+            memory_type=MemoryRecallType.VIDEO,
+        )
+        return result, segment
+
+    result, segment = asyncio.run(scenario())
+
+    assert result.used_recent_fallback is False
+    assert result.matches[0].path == f"{segment.source_uri}?t=18-27"
+    assert result.matches[0].document_type == "video_observation"
+
+
 def test_video_recall_falls_back_to_recent_episode_summary_for_known_game(db):
     async def scenario():
         memory = Memory(InMemoryStore())

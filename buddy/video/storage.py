@@ -595,12 +595,12 @@ def search_episode_observations(
     limit: int = 5,
 ) -> list[StoredEpisodeObservation]:
     """Search bounded episode evidence by text plus session/game/date filters."""
-    fts_query = _build_fts_query(query)
+    exact_query, fallback_query = _build_fts_queries(query)
     if not 1 <= limit <= 100:
         raise ValueError("Video observation search limit must be between 1 and 100.")
 
     filters: list[str] = []
-    parameters: list[object] = [fts_query]
+    parameters: list[object] = [exact_query]
     if conversation_id is not None:
         filters.append("segments.conversation_id = ?")
         parameters.append(conversation_id)
@@ -634,6 +634,25 @@ def search_episode_observations(
         """,
         parameters,
     ).fetchall()
+    if not rows and fallback_query is not None:
+        parameters[0] = fallback_query
+        rows = conn.execute(
+            f"""
+            SELECT observations.*
+            FROM video_observation_search AS search
+            JOIN video_observations AS observations
+              ON observations.id = search.observation_id
+            JOIN video_segments AS segments
+              ON segments.id = observations.segment_id
+            WHERE video_observation_search MATCH ?
+              {where_filters}
+            ORDER BY bm25(video_observation_search),
+                     segments.started_at DESC,
+                     observations.start_seconds
+            LIMIT ?
+            """,
+            parameters,
+        ).fetchall()
     return [_episode_observation_from_row(row) for row in rows]
 
 
@@ -959,11 +978,14 @@ def _save_episode_observations(
         )
 
 
-def _build_fts_query(query: str) -> str:
+def _build_fts_queries(query: str) -> tuple[str, str | None]:
     tokens = re.findall(r"\w+", query.casefold(), flags=re.UNICODE)
     if not tokens:
         raise ValueError("Video observation search query must contain text.")
-    return " ".join(f'"{token}"*' for token in tokens)
+    terms = list(dict.fromkeys(f'"{token}"*' for token in tokens[:16]))
+    exact = " AND ".join(terms)
+    fallback = " OR ".join(terms) if len(terms) > 1 else None
+    return exact, fallback
 
 
 def _validate_game_document_id(
