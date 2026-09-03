@@ -108,11 +108,13 @@ def test_init_db_migrates_existing_conversations_table(tmp_path):
                 'memory_documents',
                 'memory_relations',
                 'memory_search',
+                'memory_search_en',
                 'video_segments',
                 'video_reports',
                 'video_context_updates',
                 'video_observations',
-                'video_observation_search'
+                'video_observation_search',
+                'video_observation_search_en'
             )
             """
         ).fetchall()
@@ -124,11 +126,13 @@ def test_init_db_migrates_existing_conversations_table(tmp_path):
         "memory_documents",
         "memory_relations",
         "memory_search",
+        "memory_search_en",
         "video_segments",
         "video_reports",
         "video_context_updates",
         "video_observations",
         "video_observation_search",
+        "video_observation_search_en",
     }
 
 

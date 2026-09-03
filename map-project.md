@@ -127,7 +127,8 @@ completed conversation
        -> main/games/<game-slug>.md
   -> data/chatbot.db memory index
        -> memory_documents
-       -> memory_search (FTS5)
+       -> memory_search (legacy-compatible FTS5)
+       -> memory_search_en (canonical English FTS5 + Porter stemming)
        -> memory_relations (session -> game)
 ```
 
@@ -135,8 +136,11 @@ Future recall uses a bounded retrieval pipeline:
 
 ```text
 recall_memory
+  -> question keeps the user's original language for the Context Butler
+  -> query_en contains short English retrieval terms
   -> memory_type=video
        -> video.storage.search_episode_observations
+            -> video_observation_search_en with English Porter stemming
             -> precise FTS5 AND query
             -> bounded OR fallback when added words produce no result
        -> if no exact match and a game is known:
@@ -183,14 +187,16 @@ video_reports (overview or episode)
 
 video_reports (episode)
   1 -> many video_observations
-  indexed by video_observation_search (FTS5)
+  indexed by video_observation_search_en (canonical English FTS5 + Porter)
+  legacy rows retained in video_observation_search
 
 video_reports (detail)
   unique request_key -> one cached answer
 
 memory_documents
   session --belongs_to_game--> game
-  indexed by memory_search (FTS5)
+  indexed by memory_search_en (canonical English FTS5 + Porter)
+  legacy rows retained in memory_search
 
 memory_processing_jobs
   conversation_id -> ordered cross-database checkpoint + retry payload
@@ -207,7 +213,9 @@ Main responsibilities:
 The database uses `PRAGMA user_version`. Schema version 2 migrated the original path-unique
 video tables to recording keys and added indexed detail request keys. Version 3 adds the
 memory-processing journal. Version 4 adds detailed episode reports, normalized searchable
-observations, and optional segment-to-game links. Version 5 adds durable episode summaries
+observations, and optional segment-to-game links. Version 5 adds durable episode summaries.
+Version 6 adds canonical English Porter-stemmed memory and video indexes while retaining
+and backfilling the legacy FTS tables for existing databases.
 to context updates. Existing segment/report/context IDs are preserved. Storage reads
 validate report JSON and context-source JSON before returning domain objects.
 
@@ -245,18 +253,18 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/memory/compaction.py` | Time-window short-memory compaction and history formatting | Main agent capability and session-memory formatter |
 | `buddy/memory/long_term.py` | Injection-only Harness Memory backed by SQLite | Used by chat, recall, and post-session analyzers |
 | `buddy/memory/session.py` | Logical `main/sessions/*.md` reports and indexing | Called at shutdown and pending-memory processing |
-| `buddy/memory/index.py` | Memory metadata, FTS5 search, and session-to-game relations | Used by session/game memory and recall |
+| `buddy/memory/index.py` | Memory metadata, canonical English Porter FTS5 search, legacy-index migration, and session-to-game relations | Used by session/game memory and recall |
 | `buddy/memory/analysis.py` | Completed-session global consolidation coordinator | Updates global memory, session documents, and game profiles |
 | `buddy/memory/journal.py` | Durable cross-database checkpoints and retry payloads | Lets pending-memory processing resume after session, global, or game stages |
 | `buddy/memory/game.py` | Game-name normalization, collision-safe paths, documents, and relations | Used by memory analysis and recall; adds a title hash only when two distinct titles share a slug |
 | `buddy/memory/game_analysis.py` | Source-aware updates of allowed `main/games/*.md` profiles | Receives explicit user evidence and video observations |
-| `buddy/memory/recall.py` | Bounded historical retrieval and reduction for game profiles, sessions, episode summaries, and timestamped video observations | Uses the memory/video indexes, Harness store, and Context Butler |
+| `buddy/memory/recall.py` | Bounded historical retrieval using original-language questions plus `query_en`, followed by reduction of game profiles, sessions, episode summaries, and timestamped video observations | Uses the canonical memory/video indexes, Harness store, and Context Butler |
 | `buddy/memory/context_butler.py` | Small agent reducing recalled memory documents | Used only by `memory.recall.py` |
 | `buddy/video/models.py` | Video enums, dataclasses, legacy overview models, and detailed Episode Pydantic models | Shared contract for all video modules |
 | `buddy/video/analyzer.py` | Provider-neutral episode/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
 | `buddy/video/gemini.py` | Gemini upload, polling, minimal provider-compatible JSON Schema generation, Pydantic parsing, and cleanup | Native provider adapter for episode, legacy overview, and detail modes; reports the failing provider stage |
 | `buddy/video/metadata.py` | Dependency-free MP4/MOV duration reader | Used by the manual CLI before segment registration |
-| `buddy/video/storage.py` | Versioned video schema, validated report/observation persistence, FTS5 episode search, game links, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
+| `buddy/video/storage.py` | Versioned video schema, validated report/observation persistence, canonical English Porter FTS5 episode search, legacy-index migration, game links, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
 | `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, episode timeline sanitization, retry, legacy-overview reuse, conservative game linking, and persistence | Connects `VideoAnalyzer` to `video.storage` without losing an otherwise valid episode |
 | `buddy/video/context_butler.py` | Episode-summary and replacement-state prompt construction plus source validation | Used by `video.context_service.py` |
 | `buddy/video/context_service.py` | Idempotent episode-to-summary/current-context reduction, including late-report handling | Connects storage to Video Context Butler |

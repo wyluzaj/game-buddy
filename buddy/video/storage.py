@@ -136,10 +136,48 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE VIRTUAL TABLE IF NOT EXISTS video_observation_search_en USING fts5(
+            observation_id UNINDEXED,
+            activity,
+            location,
+            description,
+            visible_objects,
+            visible_text,
+            tokenize = 'porter unicode61 remove_diacritics 2'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO video_observation_search_en (
+            observation_id, activity, location, description,
+            visible_objects, visible_text
+        )
+        SELECT legacy.observation_id, legacy.activity, legacy.location,
+               legacy.description, legacy.visible_objects, legacy.visible_text
+        FROM video_observation_search AS legacy
+        WHERE NOT EXISTS (
+            SELECT 1 FROM video_observation_search_en AS canonical
+            WHERE canonical.observation_id = legacy.observation_id
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TRIGGER IF NOT EXISTS video_observations_after_delete
         AFTER DELETE ON video_observations
         BEGIN
             DELETE FROM video_observation_search
+            WHERE observation_id = OLD.id;
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS video_observations_after_delete_en
+        AFTER DELETE ON video_observations
+        BEGIN
+            DELETE FROM video_observation_search_en
             WHERE observation_id = OLD.id;
         END
         """
@@ -620,14 +658,14 @@ def search_episode_observations(
     rows = conn.execute(
         f"""
         SELECT observations.*
-        FROM video_observation_search AS search
+        FROM video_observation_search_en AS search
         JOIN video_observations AS observations
           ON observations.id = search.observation_id
         JOIN video_segments AS segments
           ON segments.id = observations.segment_id
-        WHERE video_observation_search MATCH ?
+        WHERE video_observation_search_en MATCH ?
           {where_filters}
-        ORDER BY bm25(video_observation_search),
+        ORDER BY bm25(video_observation_search_en),
                  segments.started_at DESC,
                  observations.start_seconds
         LIMIT ?
@@ -639,14 +677,14 @@ def search_episode_observations(
         rows = conn.execute(
             f"""
             SELECT observations.*
-            FROM video_observation_search AS search
+            FROM video_observation_search_en AS search
             JOIN video_observations AS observations
               ON observations.id = search.observation_id
             JOIN video_segments AS segments
               ON segments.id = observations.segment_id
-            WHERE video_observation_search MATCH ?
+            WHERE video_observation_search_en MATCH ?
               {where_filters}
-            ORDER BY bm25(video_observation_search),
+            ORDER BY bm25(video_observation_search_en),
                      segments.started_at DESC,
                      observations.start_seconds
             LIMIT ?
@@ -958,6 +996,27 @@ def _save_episode_observations(
         conn.execute(
             """
             INSERT INTO video_observation_search (
+                observation_id,
+                activity,
+                location,
+                description,
+                visible_objects,
+                visible_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                observation_id,
+                observation.activity,
+                observation.location or "",
+                observation.description,
+                "\n".join(observation.visible_objects),
+                "\n".join(observation.visible_text),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO video_observation_search_en (
                 observation_id,
                 activity,
                 location,

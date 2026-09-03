@@ -74,7 +74,7 @@ class MemoryRecallService:
     async def recall(
         self,
         *,
-        query: str | None = None,
+        query_en: str | None = None,
         game: str | None = None,
         memory_type: MemoryRecallType = MemoryRecallType.ALL,
         date_from: str | None = None,
@@ -87,7 +87,7 @@ class MemoryRecallService:
                 f"Recall limit must be between 1 and {MEMORY.recall_results}."
             )
         occurred_from, occurred_before = _parse_date_range(date_from, date_to)
-        normalized_query = query.strip() if query and query.strip() else None
+        normalized_query = query_en.strip() if query_en and query_en.strip() else None
         normalized_game = game.strip() if game and game.strip() else None
 
         game_document = None
@@ -351,7 +351,7 @@ class MemoryRecallCoordinator:
         self,
         *,
         question: str,
-        query: str | None = None,
+        query_en: str | None = None,
         game: str | None = None,
         memory_type: MemoryRecallType = MemoryRecallType.ALL,
         date_from: str | None = None,
@@ -365,7 +365,7 @@ class MemoryRecallCoordinator:
             raise ValueError("question must not be empty.")
 
         recalled = await self._service.recall(
-            query=query,
+            query_en=query_en,
             game=game,
             memory_type=memory_type,
             date_from=date_from,
@@ -409,7 +409,7 @@ def create_recall_memory_tool(
     async def recall_memory(
         ctx: RunContext,
         question: str,
-        query: str | None = None,
+        query_en: str | None = None,
         game: str | None = None,
         memory_type: MemoryRecallType = MemoryRecallType.ALL,
         date_from: str | None = None,
@@ -418,16 +418,17 @@ def create_recall_memory_tool(
     ) -> ContextButlerResult:
         """Recall and reduce prior game, session, or video memory for one question.
 
-        `question` is the user's complete information need. Use short distinctive
-        keywords in `query`. `game` should be a title explicitly known from the
-        conversation. Use `memory_type="video"` for earlier gameplay footage;
-        exact observations are preferred and recent episode summaries are the
-        bounded fallback for a known game. Dates use YYYY-MM-DD and are inclusive.
-        Only compact, source-validated evidence is returned to the parent agent.
+        `question` is the user's complete information need in its original
+        language. Translate short distinctive search terms into canonical English
+        and pass them in `query_en`. `game` should be a title explicitly known
+        from the conversation. Use `memory_type="video"` for earlier gameplay
+        footage; exact observations are preferred and recent episode summaries
+        are the bounded fallback for a known game. Dates use YYYY-MM-DD and are
+        inclusive. Only compact, source-validated evidence is returned.
         """
         return await coordinator.recall(
             question=question,
-            query=query,
+            query_en=query_en,
             game=game,
             memory_type=memory_type,
             date_from=date_from,

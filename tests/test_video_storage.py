@@ -246,6 +246,33 @@ def test_episode_report_persists_and_indexes_detailed_observations(db):
     assert observations[0].source_uri == f"{segment.source_uri}?t=18-32"
 
 
+def test_english_video_index_matches_inflected_word_forms(db):
+    segment = _recorded_segment(db)
+    assert claim_video_segment_for_analysis(db, segment.id) is not None
+    save_video_report(
+        db,
+        segment_id=segment.id,
+        mode=VideoReportMode.EPISODE,
+        provider="stub",
+        model_name="stub",
+        content=EpisodeAnalysis(
+            observations=[
+                EpisodeObservation(
+                    start_seconds=10,
+                    end_seconds=15,
+                    activity="Collecting stars.",
+                    description="The player collected three stars.",
+                    visible_objects=["stars"],
+                )
+            ]
+        ).model_dump(mode="json"),
+    )
+
+    matches = search_episode_observations(db, query="star")
+
+    assert [match.segment_id for match in matches] == [segment.id]
+
+
 def test_episode_search_can_be_limited_to_a_confirmed_game(db):
     first_game = index_memory_document(
         db,

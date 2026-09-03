@@ -103,10 +103,42 @@ def init_memory_index(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_search_en USING fts5(
+            document_id UNINDEXED,
+            title,
+            summary,
+            body,
+            tokenize = 'porter unicode61 remove_diacritics 2'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO memory_search_en (document_id, title, summary, body)
+        SELECT legacy.document_id, legacy.title, legacy.summary, legacy.body
+        FROM memory_search AS legacy
+        WHERE NOT EXISTS (
+            SELECT 1 FROM memory_search_en AS canonical
+            WHERE canonical.document_id = legacy.document_id
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TRIGGER IF NOT EXISTS memory_documents_after_delete
         AFTER DELETE ON memory_documents
         BEGIN
             DELETE FROM memory_search WHERE document_id = OLD.id;
+            DELETE FROM memory_search_en WHERE document_id = OLD.id;
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS memory_documents_after_delete_en
+        AFTER DELETE ON memory_documents
+        BEGIN
+            DELETE FROM memory_search_en WHERE document_id = OLD.id;
         END
         """
     )
@@ -181,8 +213,19 @@ def index_memory_document(
             (document.id,),
         )
         conn.execute(
+            "DELETE FROM memory_search_en WHERE document_id = ?",
+            (document.id,),
+        )
+        conn.execute(
             """
             INSERT INTO memory_search (document_id, title, summary, body)
+            VALUES (?, ?, ?, ?)
+            """,
+            (document.id, document.title, document.summary, body),
+        )
+        conn.execute(
+            """
+            INSERT INTO memory_search_en (document_id, title, summary, body)
             VALUES (?, ?, ?, ?)
             """,
             (document.id, document.title, document.summary, body),
@@ -301,8 +344,8 @@ def search_memory_documents(
         normalized_query = _build_fts_query(query)
         if normalized_query is None:
             return []
-        join = "JOIN memory_search ON memory_search.document_id = documents.id"
-        conditions.append("memory_search MATCH ?")
+        join = "JOIN memory_search_en ON memory_search_en.document_id = documents.id"
+        conditions.append("memory_search_en MATCH ?")
         params.append(normalized_query)
 
     if document_type is not None:
@@ -335,7 +378,7 @@ def search_memory_documents(
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     order = (
-        "ORDER BY bm25(memory_search, 0.0, 5.0, 3.0, 1.0), "
+        "ORDER BY bm25(memory_search_en, 0.0, 5.0, 3.0, 1.0), "
         "documents.occurred_at DESC, documents.id DESC"
         if query is not None
         else "ORDER BY documents.occurred_at DESC, documents.id DESC"
