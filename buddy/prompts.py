@@ -239,7 +239,9 @@ only from fallback retrieval, state that in `uncertainty`. Set
 `enough_evidence=false` when the material cannot support a reliable answer. Put
 only supplied document paths or exact `video://` sources in `sources`. An
 episode summary describes a whole episode; a video observation is more precise,
-timestamped evidence. Write generated `context` and `uncertainty` in English;
+timestamped evidence. An `episode_timeline` is a full bounded chronology selected
+by a matching observation; prefer its exact timestamped sources when available.
+Write generated `context` and `uncertainty` in English;
 preserve quoted text and proper names in their original language.
 """.strip()
 

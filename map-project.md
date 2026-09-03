@@ -143,6 +143,8 @@ recall_memory
             -> video_observation_search_en with English Porter stemming
             -> precise FTS5 AND query
             -> bounded OR fallback when added words produce no result
+            -> matching observations select distinct candidate episodes
+            -> each candidate expands to its bounded complete timeline
        -> if no exact match and a game is known:
             video.storage.get_recent_episode_summaries (bounded fallback)
   -> memory_type=game/session/all
@@ -154,8 +156,11 @@ recall_memory
 ```
 
 The main agent must search stored episode evidence before requesting a new Gemini
-detail analysis. A detail request is allowed only for one concrete `video://` source
-returned by current context or recall; the agent never scans an unbounded recording set.
+detail analysis. A lexical hit selects an episode rather than becoming the final answer;
+the complete stored timeline (up to the configured character bound) is returned with its
+exact timestamp sources. A detail request is allowed only for one concrete `video://`
+source returned by current context or recall; the agent never scans an unbounded
+recording set.
 
 Global memory is based on explicit user statements. Video observations may enrich a
 confirmed game's profile and session report, but they cannot become global user facts by
@@ -258,7 +263,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/memory/journal.py` | Durable cross-database checkpoints and retry payloads | Lets pending-memory processing resume after session, global, or game stages |
 | `buddy/memory/game.py` | Game-name normalization, collision-safe paths, documents, and relations | Used by memory analysis and recall; adds a title hash only when two distinct titles share a slug |
 | `buddy/memory/game_analysis.py` | Source-aware updates of allowed `main/games/*.md` profiles | Receives explicit user evidence and video observations |
-| `buddy/memory/recall.py` | Bounded historical retrieval using original-language questions plus `query_en`, followed by reduction of game profiles, sessions, episode summaries, and timestamped video observations | Uses the canonical memory/video indexes, Harness store, and Context Butler |
+| `buddy/memory/recall.py` | Bounded historical retrieval using original-language questions plus `query_en`; video hits expand into distinct complete episode timelines before Context Butler reduction | Uses the canonical memory/video indexes, Harness store, and Context Butler |
 | `buddy/memory/context_butler.py` | Small agent reducing recalled memory documents | Used only by `memory.recall.py` |
 | `buddy/video/models.py` | Video enums, dataclasses, legacy overview models, and detailed Episode Pydantic models | Shared contract for all video modules |
 | `buddy/video/analyzer.py` | Provider-neutral episode/detail protocols and domain errors | Implemented by Gemini; consumed by application services |

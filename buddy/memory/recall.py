@@ -6,11 +6,11 @@ from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Awaitable, Callable, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai import RunContext, RunUsage
 from pydantic_ai_harness.memory import Memory
 
-from buddy.config import MEMORY
+from buddy.config import MEMORY, VIDEO
 from buddy.memory.context_butler import (
     ContextButler,
     ContextButlerResult,
@@ -28,6 +28,7 @@ from buddy.memory.index import (
 )
 from buddy.video.models import StoredEpisodeObservation, StoredEpisodeSummary
 from buddy.video.storage import (
+    get_episode_observations,
     get_recent_episode_summaries,
     get_video_segment,
     search_episode_observations,
@@ -54,6 +55,7 @@ class RecalledMemory(BaseModel):
     summary: str
     content: str
     truncated: bool
+    sources: list[str] = Field(default_factory=list)
 
 
 class MemoryRecallResult(BaseModel):
@@ -121,12 +123,15 @@ class MemoryRecallService:
                     ),
                     occurred_from=occurred_from,
                     occurred_before=occurred_before,
+                    limit=min(
+                        MEMORY.search_results,
+                        remaining * VIDEO.recall_candidate_multiplier,
+                    ),
+                )
+                video_matches = self._expand_candidate_episode_timelines(
+                    observations,
                     limit=remaining,
                 )
-                video_matches = [
-                    self._read_video_observation(observation)
-                    for observation in observations
-                ]
             if not video_matches and game_document is not None:
                 summaries = get_recent_episode_summaries(
                     self._conn,
@@ -217,15 +222,56 @@ class MemoryRecallService:
             matches=matches,
         )
 
-    def _read_video_observation(
+    def _expand_candidate_episode_timelines(
         self,
-        observation: StoredEpisodeObservation,
+        matches: list[StoredEpisodeObservation],
+        *,
+        limit: int,
+    ) -> list[RecalledMemory]:
+        """Use matching observations to select bounded complete episode timelines."""
+        candidates: list[RecalledMemory] = []
+        seen_segments: set[int] = set()
+        for match in matches:
+            if match.segment_id in seen_segments:
+                continue
+            seen_segments.add(match.segment_id)
+            candidates.append(self._read_episode_timeline(match))
+            if len(candidates) >= limit:
+                break
+        return candidates
+
+    def _read_episode_timeline(
+        self,
+        matched_observation: StoredEpisodeObservation,
     ) -> RecalledMemory:
-        segment = get_video_segment(self._conn, observation.segment_id)
+        segment = get_video_segment(self._conn, matched_observation.segment_id)
         if segment is None:
             raise RuntimeError("A searched video observation lost its segment.")
         game_title = self._game_title(segment.game_document_id)
+        observations = get_episode_observations(self._conn, segment.id)
+        content = "\n\n".join(
+            self._render_video_observation(observation)
+            for observation in observations
+        )
+        content, truncated = _bounded_text(content, VIDEO.recall_episode_chars)
+        sources = [segment.source_uri]
+        sources.extend(observation.source_uri for observation in observations)
+        return RecalledMemory(
+            path=segment.source_uri,
+            document_type="episode_timeline",
+            title=f"Episode {segment.id} timeline",
+            occurred_at=segment.started_at.isoformat(),
+            games=[game_title] if game_title else [],
+            summary=matched_observation.description,
+            content=content,
+            truncated=truncated,
+            sources=list(dict.fromkeys(sources)),
+        )
+
+    @staticmethod
+    def _render_video_observation(observation: StoredEpisodeObservation) -> str:
         details = [
+            f"Source: {observation.source_uri}",
             f"Activity: {observation.activity}",
             f"Location: {observation.location or '(unknown)'}",
             f"Description: {observation.description}",
@@ -236,19 +282,7 @@ class MemoryRecallService:
             details.append("Visible text: " + ", ".join(observation.visible_text))
         if observation.uncertainties:
             details.append("Uncertainties: " + ", ".join(observation.uncertainties))
-        return RecalledMemory(
-            path=observation.source_uri,
-            document_type="video_observation",
-            title=(
-                f"Episode {observation.segment_id}, "
-                f"{observation.start_seconds:g}-{observation.end_seconds:g}s"
-            ),
-            occurred_at=segment.started_at.isoformat(),
-            games=[game_title] if game_title else [],
-            summary=observation.description,
-            content="\n".join(details),
-            truncated=False,
-        )
+        return "\n".join(details)
 
     @staticmethod
     def _read_episode_summary(summary: StoredEpisodeSummary) -> RecalledMemory:
@@ -261,6 +295,7 @@ class MemoryRecallService:
             summary=summary.summary,
             content=summary.summary,
             truncated=False,
+            sources=[summary.source_uri],
         )
 
     def _game_title(self, game_document_id: int | None) -> str | None:
@@ -333,6 +368,7 @@ class MemoryRecallService:
             summary=document.summary,
             content=content,
             truncated=truncated,
+            sources=[document.path],
         )
 
 
@@ -387,7 +423,11 @@ class MemoryRecallCoordinator:
         analyzed = await self._context_butler.run(prompt, usage=usage)
         return validate_butler_sources(
             analyzed.output,
-            allowed_sources={match.path for match in recalled.matches},
+            allowed_sources={
+                source
+                for match in recalled.matches
+                for source in (match.sources or [match.path])
+            },
         )
 
 
@@ -497,3 +537,10 @@ def _bounded_excerpt(content: str, query: str | None) -> tuple[str, bool]:
     if end < len(content):
         excerpt = excerpt[:-1] + "…"
     return excerpt, True
+
+
+def _bounded_text(content: str, max_chars: int) -> tuple[str, bool]:
+    """Bound a retrieval payload and mark that it no longer contains all data."""
+    if len(content) <= max_chars:
+        return content, False
+    return content[: max_chars - 1].rstrip() + "…", True

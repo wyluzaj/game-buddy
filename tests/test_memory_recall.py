@@ -114,6 +114,14 @@ def _add_episode(db, *, conversation_id: int, game_document_id: int):
         content=EpisodeAnalysis(
             observations=[
                 EpisodeObservation(
+                    start_seconds=0,
+                    end_seconds=12,
+                    activity="Crossing a wooden bridge.",
+                    location="River crossing",
+                    description="The player crossed a bridge toward the forest.",
+                    visible_objects=["wooden bridge", "river"],
+                ),
+                EpisodeObservation(
                     start_seconds=18,
                     end_seconds=27,
                     activity="Exploring a forest path.",
@@ -355,9 +363,11 @@ def test_video_recall_returns_exact_timestamped_episode_observation(db):
 
     assert result.used_recent_fallback is False
     assert len(result.matches) == 1
-    assert result.matches[0].path == f"{segment.source_uri}?t=18-27"
-    assert result.matches[0].document_type == "video_observation"
+    assert result.matches[0].path == segment.source_uri
+    assert result.matches[0].document_type == "episode_timeline"
+    assert "Crossing a wooden bridge" in result.matches[0].content
     assert "left side" in result.matches[0].content
+    assert f"{segment.source_uri}?t=18-27" in result.matches[0].sources
     assert result.matches[0].games == ["Big Walk"]
 
 
@@ -387,8 +397,50 @@ def test_video_recall_relaxes_noisy_query_without_losing_game_filter(db):
     result, segment = asyncio.run(scenario())
 
     assert result.used_recent_fallback is False
-    assert result.matches[0].path == f"{segment.source_uri}?t=18-27"
-    assert result.matches[0].document_type == "video_observation"
+    assert result.matches[0].path == segment.source_uri
+    assert result.matches[0].document_type == "episode_timeline"
+
+
+def test_context_butler_can_cite_an_exact_range_from_expanded_timeline(db):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        _, game = await _add_session(
+            db,
+            memory,
+            conversation_id=1,
+            game_name="Big Walk",
+            day=20,
+            context="User: I am playing Big Walk.",
+        )
+        segment = _add_episode(
+            db,
+            conversation_id=1,
+            game_document_id=game.id,
+        )
+        exact_source = f"{segment.source_uri}?t=18-27"
+        butler = StubContextButler(
+            ContextButlerResult(
+                enough_evidence=True,
+                context="The red balloon was on the left side of the path.",
+                sources=[exact_source],
+            )
+        )
+        coordinator = MemoryRecallCoordinator(
+            MemoryRecallService(db, memory),
+            butler,
+        )
+        result = await coordinator.recall(
+            question="Gdzie był czerwony balon?",
+            query_en="red balloon",
+            game="Big Walk",
+            memory_type=MemoryRecallType.VIDEO,
+        )
+        return result, exact_source
+
+    result, exact_source = asyncio.run(scenario())
+
+    assert result.enough_evidence is True
+    assert result.sources == [exact_source]
 
 
 def test_video_recall_falls_back_to_recent_episode_summary_for_known_game(db):
