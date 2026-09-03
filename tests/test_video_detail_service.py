@@ -201,6 +201,44 @@ def test_valid_detail_evidence_survives_invalid_provider_timestamp(db, tmp_path)
     assert "Odrzucono 1 obserwację" in result.uncertainties[-1]
 
 
+def test_minute_decimal_provider_timestamps_are_normalized(db, tmp_path):
+    segment = _completed_segment(db, tmp_path)
+    analyzer = StubDetailAnalyzer(
+        [
+            VideoDetailAnalysis(
+                answer="Symbole pojawiły się w 0:07 i 0:15.",
+                observations=[
+                    VideoDetailObservation(
+                        start_seconds=0.07,
+                        end_seconds=0.08,
+                        description="Pierwszy symbol.",
+                    ),
+                    VideoDetailObservation(
+                        start_seconds=0.15,
+                        end_seconds=0.16,
+                        description="Drugi symbol.",
+                    ),
+                ],
+            )
+        ]
+    )
+
+    result = asyncio.run(
+        analyze_video_detail_source(
+            db,
+            analyzer,
+            source_uri=segment.source_uri,
+            question="Kiedy pojawiły się symbole?",
+        )
+    )
+
+    assert result.sources == [
+        f"{segment.source_uri}?t=7-8",
+        f"{segment.source_uri}?t=15-16",
+    ]
+    assert "Znormalizowano timestampy" in result.uncertainties[-1]
+
+
 def test_concurrent_identical_detail_requests_call_provider_once(db, tmp_path):
     segment = _completed_segment(db, tmp_path)
     analyzer = StubDetailAnalyzer(

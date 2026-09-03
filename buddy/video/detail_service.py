@@ -85,6 +85,7 @@ async def analyze_video_detail_source(
             start_seconds=parsed.start_seconds,
             end_seconds=parsed.end_seconds,
         )
+        analysis = _normalize_minute_decimal_timestamps(analysis)
         analysis, sources = _sanitize_and_build_sources(analysis, parsed)
         content = analysis.model_dump(mode="json")
         content["requested_source"] = parsed.canonical_uri
@@ -193,6 +194,51 @@ def _sanitize_and_build_sources(
         }
     )
     return sanitized, list(dict.fromkeys(sources)) or [requested.canonical_uri]
+
+
+def _normalize_minute_decimal_timestamps(
+    analysis: VideoDetailAnalysis,
+) -> VideoDetailAnalysis:
+    """Repair provider output that encoded mm:ss as a decimal number."""
+    stated_seconds = {
+        int(minutes) * 60 + int(seconds)
+        for minutes, seconds in re.findall(r"(?<!\d)(\d+):([0-5]\d)(?!\d)", analysis.answer)
+    }
+    if not stated_seconds or not any(
+        _minute_decimal_seconds(item.start_seconds) in stated_seconds
+        for item in analysis.observations
+    ):
+        return analysis
+
+    observations = []
+    for item in analysis.observations:
+        normalized_start = _minute_decimal_seconds(item.start_seconds)
+        if normalized_start not in stated_seconds:
+            observations.append(item)
+            continue
+        observations.append(
+            item.model_copy(
+                update={
+                    "start_seconds": normalized_start,
+                    "end_seconds": _minute_decimal_seconds(item.end_seconds),
+                }
+            )
+        )
+    note = "Znormalizowano timestampy zwrócone przez dostawcę w formacie mm.ss."
+    return analysis.model_copy(
+        update={
+            "observations": observations,
+            "uncertainties": [*analysis.uncertainties, note],
+        }
+    )
+
+
+def _minute_decimal_seconds(value: float) -> float:
+    minutes = int(value)
+    seconds = round((value - minutes) * 100)
+    if seconds >= 60:
+        return value
+    return float(minutes * 60 + seconds)
 
 
 def _answer_from_report(
