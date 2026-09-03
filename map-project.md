@@ -19,6 +19,8 @@ buddy.main.main
        -> memory.session.persist_session_document
        -> journal checkpoint: SESSION_PERSISTED
        -> memory.analysis._apply_long_term_memory
+       -> analyzer returns session_summary_en even when global memory is unchanged
+       -> temporary raw session report is replaced by the canonical English report
        -> journal checkpoint: GLOBAL_APPLIED + structured analyzer result
        -> memory.game.link_session_to_games
        -> memory.game_analysis.update_game_profiles
@@ -162,7 +164,10 @@ exact timestamp sources. A detail request is allowed only for one concrete `vide
 source returned by current context or recall; the agent never scans an unbounded
 recording set.
 
-Global memory is based on explicit user statements. Video observations may enrich a
+Global memory is based on explicit user statements. The raw messages and the temporary
+shutdown snapshot keep their original language in `chatbot.db`; after analysis,
+`session_summary_en` replaces the logical session report and its search entry. Video
+observations may enrich a
 confirmed game's profile and session report, but they cannot become global user facts by
 themselves. A one-off behavior seen in video remains an event or mechanic and cannot be
 promoted to a durable user preference. Raw structured `ModelMessage` objects are the
@@ -259,7 +264,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/memory/long_term.py` | Injection-only Harness Memory backed by SQLite | Used by chat, recall, and post-session analyzers |
 | `buddy/memory/session.py` | Logical `main/sessions/*.md` reports and indexing | Called at shutdown and pending-memory processing |
 | `buddy/memory/index.py` | Memory metadata, canonical English Porter FTS5 search, legacy-index migration, and session-to-game relations | Used by session/game memory and recall |
-| `buddy/memory/analysis.py` | Completed-session global consolidation coordinator | Updates global memory, session documents, and game profiles |
+| `buddy/memory/analysis.py` | Completed-session consolidation coordinator | Updates global memory, replaces temporary session snapshots with `session_summary_en`, and coordinates game profiles |
 | `buddy/memory/journal.py` | Durable cross-database checkpoints and retry payloads | Lets pending-memory processing resume after session, global, or game stages |
 | `buddy/memory/game.py` | Game-name normalization, collision-safe paths, documents, and relations | Used by memory analysis and recall; adds a title hash only when two distinct titles share a slug |
 | `buddy/memory/game_analysis.py` | Source-aware updates of allowed `main/games/*.md` profiles | Receives explicit user evidence and video observations |

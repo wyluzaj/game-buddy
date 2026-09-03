@@ -318,15 +318,29 @@ def test_raw_messages_are_fallback_when_snapshot_is_empty(db):
     save_messages(db, conversation_id, raw_messages)
     finish_conversation(db, conversation_id, "")
     analyzer = StubAnalyzer(
-        MemoryAnalysisResult(changed=False, global_facts=[])
+        MemoryAnalysisResult(
+            changed=False,
+            global_facts=[],
+            session_summary_en=(
+                "The user enjoys exploration and wants to continue exploring."
+            ),
+        )
     )
+    memory = Memory(InMemoryStore())
 
     report = asyncio.run(
-        process_pending_memories(db, analyzer, Memory(InMemoryStore()))
+        process_pending_memories(db, analyzer, memory)
+    )
+    session_file = asyncio.run(
+        memory.store.read(session_memory_path(conversation_id), max_chars=10_000)
     )
 
     assert report.processed == 1
     assert 'User: "Lubię eksplorację."' in analyzer.prompts[0]
+    assert session_file is not None
+    assert "The user enjoys exploration" in session_file.content
+    assert "Lubię eksplorację" not in session_file.content
+    assert search_memory_documents(db, query="explore")
 
 
 def test_multiline_user_message_is_preserved_as_memory_evidence(db):

@@ -333,6 +333,13 @@ statement. Return the complete replacement list for MEMORY.md in
 deterministically. Write every generated fact in English. Preserve proper names
 and exact quotes in their original language.
 
+Always return `session_summary_en`, even when `changed=false`. It is a concise
+English report of what mattered in this completed session: discussed topics,
+gameplay, decisions, goals, relevant emotions, and open threads. Do not include
+technical message formatting. Preserve proper names and exact quotations in
+their original spelling. This report replaces the temporary raw session
+snapshot, while raw messages remain stored separately.
+
 If the session adds nothing durable, set `changed=false`. `global_facts` may be
 empty because the application will not write the document.
 """.strip()
