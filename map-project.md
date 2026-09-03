@@ -50,6 +50,7 @@ remains pending and does not block later sessions.
 ```text
 buddy.video.cli
   -> optional --game creates/reuses a confirmed game memory profile
+  -> video.metadata detects MP4/MOV duration unless explicitly overridden
   -> database.init_db
   -> video.gemini.GeminiVideoAnalyzer
   -> video.pipeline.process_video_file
@@ -58,7 +59,7 @@ buddy.video.cli
             -> video.storage.create_video_segment
             -> video.storage.claim_video_segment_for_analysis
             -> GeminiVideoAnalyzer.analyze_episode
-            -> sort timestamps and discard observations beyond segment duration
+            -> sort timestamps, clip overlapping tails, discard fully out-of-range items
             -> video.storage.save_video_report(mode=episode)
             -> normalize observations into video_observations + FTS5
             -> link a pre-existing exact game profile when provider confidence >= 0.9
@@ -250,6 +251,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/video/models.py` | Video enums, dataclasses, legacy overview models, and detailed Episode Pydantic models | Shared contract for all video modules |
 | `buddy/video/analyzer.py` | Provider-neutral episode/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
 | `buddy/video/gemini.py` | Gemini upload, polling, minimal provider-compatible JSON Schema generation, Pydantic parsing, and cleanup | Native provider adapter for episode, legacy overview, and detail modes; reports the failing provider stage |
+| `buddy/video/metadata.py` | Dependency-free MP4/MOV duration reader | Used by the manual CLI before segment registration |
 | `buddy/video/storage.py` | Versioned video schema, validated report/observation persistence, FTS5 episode search, game links, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
 | `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, episode timeline sanitization, retry, legacy-overview reuse, conservative game linking, and persistence | Connects `VideoAnalyzer` to `video.storage` without losing an otherwise valid episode |
 | `buddy/video/context_butler.py` | Episode-summary and replacement-state prompt construction plus source validation | Used by `video.context_service.py` |

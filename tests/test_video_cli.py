@@ -1,9 +1,10 @@
 import asyncio
+import struct
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from buddy.config import STORAGE, VIDEO
+from buddy.config import STORAGE
 from buddy.video import cli
 
 
@@ -11,7 +12,7 @@ def test_parser_uses_central_configuration_defaults() -> None:
     args = cli.build_parser().parse_args(["clip.mp4"])
 
     assert args.video_path == Path("clip.mp4")
-    assert args.duration_seconds == VIDEO.manual_duration_seconds
+    assert args.duration_seconds is None
     assert args.database == STORAGE.chat_database_path
     assert args.memory_database == STORAGE.memory_database_path
     assert args.game is None
@@ -161,3 +162,24 @@ def test_run_analysis_links_confirmed_game_profile(tmp_path, monkeypatch) -> Non
         "conversation_id": 7,
         "game_document_id": 42,
     }
+
+
+def test_main_detects_mp4_duration(tmp_path: Path, monkeypatch) -> None:
+    clip = tmp_path / "clip.mp4"
+    mvhd_payload = b"\0\0\0\0" + b"\0" * 8 + struct.pack(">II", 1_000, 117_000)
+    mvhd = struct.pack(">I4s", len(mvhd_payload) + 8, b"mvhd") + mvhd_payload
+    moov = struct.pack(">I4s", len(mvhd) + 8, b"moov") + mvhd
+    clip.write_bytes(moov)
+    captured = {}
+
+    async def fake_run_analysis(conn, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(cli, "_run_analysis", fake_run_analysis)
+    monkeypatch.setattr(cli, "_print_outcome", lambda outcome: None)
+
+    assert cli.main([str(clip), "--database", str(tmp_path / "db.sqlite")]) == 0
+    assert (
+        captured["ended_at"] - captured["started_at"]
+    ).total_seconds() == 117

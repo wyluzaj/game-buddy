@@ -18,6 +18,7 @@ from buddy.memory.long_term import create_long_term_memory
 from buddy.video.analyzer import VideoAnalysisError
 from buddy.video.context_butler import VideoContextButler, build_video_context_butler
 from buddy.video.gemini import GeminiVideoAnalyzer
+from buddy.video.metadata import detect_video_duration
 from buddy.video.pipeline import VideoProcessingOutcome, process_video_file
 
 
@@ -29,8 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--duration-seconds",
         type=float,
-        default=VIDEO.manual_duration_seconds,
-        help="Recorded duration used for timeline metadata (default: 120).",
+        default=None,
+        help="Override detected duration; unsupported containers default to 120.",
     )
     parser.add_argument(
         "--conversation-id",
@@ -59,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Analyze one file and print a concise human-readable report."""
     args = build_parser().parse_args(argv)
-    if args.duration_seconds <= 0:
+    if args.duration_seconds is not None and args.duration_seconds <= 0:
         print("Error: --duration-seconds must be positive.", file=sys.stderr)
         return 2
 
@@ -68,8 +69,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: video file does not exist: {video_path}", file=sys.stderr)
         return 2
 
+    duration_seconds = args.duration_seconds
+    if duration_seconds is None:
+        duration_seconds = (
+            detect_video_duration(video_path) or VIDEO.manual_duration_seconds
+        )
     ended_at = datetime.fromtimestamp(video_path.stat().st_mtime, tz=timezone.utc)
-    started_at = ended_at - timedelta(seconds=args.duration_seconds)
+    started_at = ended_at - timedelta(seconds=duration_seconds)
 
     load_dotenv()
     conn = init_db(args.database)

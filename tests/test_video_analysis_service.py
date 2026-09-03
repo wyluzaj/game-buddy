@@ -269,45 +269,47 @@ def test_low_confidence_game_detection_does_not_link_profile(db, tmp_path):
     assert outcome.segment.game_document_id is None
 
 
-@pytest.mark.parametrize(
-    "episode",
-    [
-        EpisodeAnalysis(
-            observations=[
-                EpisodeObservation(
-                    start_seconds=119,
-                    end_seconds=121,
-                    activity="Za późno.",
-                    description="Za późno.",
-                )
-            ],
-        ),
-        EpisodeAnalysis(
-            observations=[
-                EpisodeObservation(
-                    start_seconds=121,
-                    end_seconds=121,
-                    activity="Odczyt tekstu.",
-                    description="Za późno.",
-                    visible_text=["Za późno"],
-                )
-            ],
-        ),
-    ],
-)
-def test_episode_timestamps_outside_segment_are_dropped(
-    db,
-    tmp_path,
-    episode,
-):
+def test_episode_observation_overlapping_end_is_clipped(db, tmp_path):
+    episode = EpisodeAnalysis(
+        observations=[
+            EpisodeObservation(
+                start_seconds=119,
+                end_seconds=121,
+                activity="Końcowa czynność.",
+                description="Końcowa czynność.",
+            )
+        ]
+    )
     segment = _segment(db, tmp_path)
     analyzer = StubVideoAnalyzer([episode])
 
     outcome = asyncio.run(analyze_video_segment(db, analyzer, segment.id))
 
     assert outcome.segment.status is VideoSegmentStatus.COMPLETED
+    assert outcome.episode.observations[0].end_seconds == 120
+    assert outcome.episode.uncertainties[-1] == (
+        "Clipped 1 observation(s) to the 120.000 s clip."
+    )
+
+
+def test_episode_observation_starting_after_end_is_dropped(db, tmp_path):
+    episode = EpisodeAnalysis(
+        observations=[
+            EpisodeObservation(
+                start_seconds=121,
+                end_seconds=121,
+                activity="Za późno.",
+                description="Za późno.",
+            )
+        ]
+    )
+    segment = _segment(db, tmp_path)
+
+    outcome = asyncio.run(
+        analyze_video_segment(db, StubVideoAnalyzer([episode]), segment.id)
+    )
+
     assert outcome.episode.observations == []
     assert outcome.episode.uncertainties[-1] == (
-        "Number of skipped observations with timestamps exceeding the "
-        "clip length: 1 (clip time: 120.000 s)."
+        "Skipped 1 observation(s) starting beyond the 120.000 s clip."
     )

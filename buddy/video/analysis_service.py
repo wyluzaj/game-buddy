@@ -266,23 +266,36 @@ def _sanitize_episode_timeline(
 ) -> EpisodeAnalysis:
     """Drop unusable provider timestamps without losing the complete episode."""
     maximum = duration_seconds + 0.001
-    observations = [
-        observation
-        for observation in episode.observations
-        if observation.end_seconds <= maximum
-    ]
+    observations = []
+    clipped = 0
+    removed = 0
+    for observation in episode.observations:
+        if observation.start_seconds >= maximum:
+            removed += 1
+            continue
+        if observation.end_seconds > maximum:
+            observation = observation.model_copy(
+                update={"end_seconds": duration_seconds}
+            )
+            clipped += 1
+        observations.append(observation)
     observations.sort(key=lambda item: (item.start_seconds, item.end_seconds))
-    removed = len(episode.observations) - len(observations)
-    if removed == 0:
+    if removed == 0 and clipped == 0:
         if observations == episode.observations:
             return episode
         return episode.model_copy(update={"observations": observations})
 
-    note = (
-        "Number of skipped observations with timestamps exceeding the "
-        f"clip length: {removed} (clip time: {duration_seconds:.3f} s)."
-    )
-    uncertainties = [*episode.uncertainties, note]
+    notes = []
+    if clipped:
+        notes.append(
+            f"Clipped {clipped} observation(s) to the {duration_seconds:.3f} s clip."
+        )
+    if removed:
+        notes.append(
+            f"Skipped {removed} observation(s) starting beyond the "
+            f"{duration_seconds:.3f} s clip."
+        )
+    uncertainties = [*episode.uncertainties, *notes]
     if len(uncertainties) > VIDEO.max_uncertainties:
         uncertainties = uncertainties[-VIDEO.max_uncertainties :]
     return episode.model_copy(
