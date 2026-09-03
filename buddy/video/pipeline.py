@@ -1,4 +1,4 @@
-"""End-to-end orchestration for overview analysis and compact video context."""
+"""End-to-end orchestration for episode analysis and compact video context."""
 
 import sqlite3
 from dataclasses import dataclass
@@ -34,9 +34,10 @@ async def process_video_file(
     started_at: datetime,
     ended_at: datetime,
     conversation_id: int | None = None,
+    game_document_id: int | None = None,
     usage: RunUsage | None = None,
 ) -> VideoProcessingOutcome:
-    """Create or reuse an overview, then create or reuse its context update."""
+    """Create or reuse an episode, then create or reuse its context update."""
     analysis = await register_and_analyze_video(
         conn,
         analyzer,
@@ -44,6 +45,7 @@ async def process_video_file(
         started_at=started_at,
         ended_at=ended_at,
         conversation_id=conversation_id,
+        game_document_id=game_document_id,
     )
     context_update = await process_video_report_context(
         conn,

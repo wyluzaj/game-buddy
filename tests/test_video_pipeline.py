@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from buddy.video.context_butler import VideoContextButlerResult
-from buddy.video.models import VideoOverview
+from buddy.video.models import EpisodeAnalysis, EpisodeObservation
 from buddy.video.pipeline import process_video_file
 from buddy.video.storage import (
     get_video_context_update_for_report,
@@ -17,13 +17,13 @@ class StubVideoAnalyzer:
     provider = "stub"
     model_name = "stub-video-model"
 
-    def __init__(self, overview: VideoOverview) -> None:
-        self.overview = overview
+    def __init__(self, episode: EpisodeAnalysis) -> None:
+        self.episode = episode
         self.calls: list[Path] = []
 
-    async def analyze_overview(self, video_path: Path) -> VideoOverview:
+    async def analyze_episode(self, video_path: Path) -> EpisodeAnalysis:
         self.calls.append(video_path)
-        return self.overview
+        return self.episode
 
 
 class StubRunResult:
@@ -51,13 +51,27 @@ def _video(tmp_path: Path) -> tuple[Path, datetime, datetime]:
     return video_path, started_at, started_at + timedelta(minutes=2)
 
 
-def test_pipeline_persists_overview_then_compact_context(db, tmp_path):
+def _episode(description: str) -> EpisodeAnalysis:
+    return EpisodeAnalysis(
+        observations=[
+            EpisodeObservation(
+                start_seconds=0,
+                end_seconds=10,
+                activity="Eksploracja.",
+                description=description,
+            )
+        ]
+    )
+
+
+def test_pipeline_persists_episode_then_summary_and_compact_context(db, tmp_path):
     """One call produces both durable layers and links them by report ID."""
     video_path, started_at, ended_at = _video(tmp_path)
-    analyzer = StubVideoAnalyzer(VideoOverview(summary="Otwarto mapę."))
+    analyzer = StubVideoAnalyzer(_episode("Otwarto mapę."))
     butler = StubContextButler(
         [
             VideoContextButlerResult(
+                episode_summary="Gracz otworzył mapę.",
                 changed=True,
                 context="Gracz sprawdza mapę.",
                 sources=["video://segment/1"],
@@ -76,7 +90,8 @@ def test_pipeline_persists_overview_then_compact_context(db, tmp_path):
         )
     )
 
-    assert outcome.analysis.overview.summary == "Otwarto mapę."
+    assert outcome.analysis.episode.observations[0].description == "Otwarto mapę."
+    assert outcome.context_update.episode_summary == "Gracz otworzył mapę."
     assert outcome.context_update.context == "Gracz sprawdza mapę."
     assert outcome.context_update.report_id == outcome.analysis.report.id
     assert get_video_context_update_for_report(
@@ -84,10 +99,10 @@ def test_pipeline_persists_overview_then_compact_context(db, tmp_path):
     ) == outcome.context_update
 
 
-def test_retry_after_butler_failure_reuses_paid_overview(db, tmp_path):
+def test_retry_after_butler_failure_reuses_paid_episode(db, tmp_path):
     """A failed reduction can resume without uploading the video a second time."""
     video_path, started_at, ended_at = _video(tmp_path)
-    analyzer = StubVideoAnalyzer(VideoOverview(summary="Znaleziono drzwi."))
+    analyzer = StubVideoAnalyzer(_episode("Znaleziono drzwi."))
     failure = RuntimeError("temporary Butler failure")
     failing_butler = StubContextButler([failure])
 
@@ -106,6 +121,7 @@ def test_retry_after_butler_failure_reuses_paid_overview(db, tmp_path):
     retry_butler = StubContextButler(
         [
             VideoContextButlerResult(
+                episode_summary="Gracz znalazł drzwi.",
                 changed=True,
                 context="Przed graczem są zamknięte drzwi.",
                 sources=["video://segment/1"],
@@ -132,9 +148,15 @@ def test_retry_after_butler_failure_reuses_paid_overview(db, tmp_path):
 def test_repeated_pipeline_call_reuses_both_results(db, tmp_path):
     """A completed file does not spend either analyzer again."""
     video_path, started_at, ended_at = _video(tmp_path)
-    analyzer = StubVideoAnalyzer(VideoOverview(summary="Spokojna eksploracja."))
+    analyzer = StubVideoAnalyzer(_episode("Spokojna eksploracja."))
     butler = StubContextButler(
-        [VideoContextButlerResult(changed=False, uncertainty="Brak zmian.")]
+        [
+            VideoContextButlerResult(
+                episode_summary="Gracz spokojnie eksplorował teren.",
+                changed=False,
+                uncertainty="Brak zmian.",
+            )
+        ]
     )
 
     first = asyncio.run(

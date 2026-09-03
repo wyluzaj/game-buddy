@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from buddy.video.models import VideoDetailAnalysis, VideoOverview
+from buddy.video.models import EpisodeAnalysis, VideoDetailAnalysis
 
 
 class VideoAnalysisError(RuntimeError):
@@ -32,8 +32,8 @@ class VideoAnalyzer(Protocol):
         """Provider-native model identifier stored with generated reports."""
         ...
 
-    async def analyze_overview(self, video_path: Path) -> VideoOverview:
-        """Create one structured fast report for a completed local video."""
+    async def analyze_episode(self, video_path: Path) -> EpisodeAnalysis:
+        """Create a detailed searchable timeline for a completed local video."""
         ...
 
     async def analyze_detail(

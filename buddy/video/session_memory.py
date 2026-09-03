@@ -3,7 +3,11 @@
 import sqlite3
 
 from buddy.config import VIDEO
-from buddy.video.storage import get_video_context_updates_for_conversation
+from buddy.video.storage import (
+    get_video_context_updates_for_conversation,
+    get_video_report,
+    get_video_segment,
+)
 
 
 def build_session_video_observations(
@@ -14,11 +18,16 @@ def build_session_video_observations(
     updates = get_video_context_updates_for_conversation(
         conn,
         conversation_id=conversation_id,
+        changed_only=False,
     )[-VIDEO.session_observations:]
     blocks: list[str] = []
     for update in updates:
-        sources = ", ".join(update.sources)
-        block = f"- {update.context}\n  Sources: {sources}"
+        report = get_video_report(conn, update.report_id)
+        segment = get_video_segment(conn, report.segment_id) if report else None
+        summary = update.episode_summary or update.context
+        if not summary or segment is None:
+            continue
+        block = f"- {summary}\n  Sources: {segment.source_uri}"
         if update.uncertainty:
             block += f"\n  Uncertainty: {update.uncertainty}"
         blocks.append(block)

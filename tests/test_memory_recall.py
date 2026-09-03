@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic_ai import RunUsage
@@ -16,6 +16,13 @@ from buddy.memory.recall import (
     MemoryRecallType,
 )
 from buddy.memory.session import persist_session_document
+from buddy.video.models import EpisodeAnalysis, EpisodeObservation, VideoReportMode
+from buddy.video.storage import (
+    claim_video_segment_for_analysis,
+    create_video_segment,
+    save_video_context_update,
+    save_video_report,
+)
 
 
 @dataclass
@@ -85,6 +92,47 @@ async def _add_session(
         game_names=[game_name],
     )
     return session, game
+
+
+def _add_episode(db, *, conversation_id: int, game_document_id: int):
+    started = datetime(2026, 8, 20, 18, 30, tzinfo=timezone.utc)
+    segment = create_video_segment(
+        db,
+        conversation_id=conversation_id,
+        game_document_id=game_document_id,
+        file_path="episode.mp4",
+        started_at=started,
+        ended_at=started + timedelta(minutes=2),
+    )
+    assert claim_video_segment_for_analysis(db, segment.id) is not None
+    report = save_video_report(
+        db,
+        segment_id=segment.id,
+        mode=VideoReportMode.EPISODE,
+        provider="stub",
+        model_name="stub",
+        content=EpisodeAnalysis(
+            observations=[
+                EpisodeObservation(
+                    start_seconds=18,
+                    end_seconds=27,
+                    activity="Eksplorowanie leśnej ścieżki.",
+                    location="Las",
+                    description="Czerwony balon wisiał po lewej stronie ścieżki.",
+                    visible_objects=["czerwony balon", "drzewa"],
+                )
+            ]
+        ).model_dump(mode="json"),
+    )
+    save_video_context_update(
+        db,
+        report_id=report.id,
+        episode_summary="Gracz przeszedł leśną ścieżką do tunelu.",
+        changed=True,
+        context="Gracz znajduje się przy wejściu do tunelu.",
+        sources=[segment.source_uri],
+    )
+    return segment
 
 
 def test_recall_returns_game_profile_and_only_its_matching_sessions(db):
@@ -278,3 +326,97 @@ def test_coordinator_skips_delegate_when_nothing_was_found(db):
     assert result.context == ""
     assert result.sources == []
     assert result.uncertainty == "No memory documents matched the supplied filters."
+
+
+def test_video_recall_returns_exact_timestamped_episode_observation(db):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        _, game = await _add_session(
+            db,
+            memory,
+            conversation_id=1,
+            game_name="Big Walk",
+            day=20,
+            context="User: Gram w Big Walk.",
+        )
+        segment = _add_episode(
+            db,
+            conversation_id=1,
+            game_document_id=game.id,
+        )
+        result = await MemoryRecallService(db, memory).recall(
+            query="czerwony balon",
+            game="Big Walk",
+            memory_type=MemoryRecallType.VIDEO,
+        )
+        return result, segment
+
+    result, segment = asyncio.run(scenario())
+
+    assert result.used_recent_fallback is False
+    assert len(result.matches) == 1
+    assert result.matches[0].path == f"{segment.source_uri}?t=18-27"
+    assert result.matches[0].document_type == "video_observation"
+    assert "po lewej stronie" in result.matches[0].content
+    assert result.matches[0].games == ["Big Walk"]
+
+
+def test_video_recall_relaxes_noisy_query_without_losing_game_filter(db):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        _, game = await _add_session(
+            db,
+            memory,
+            conversation_id=1,
+            game_name="Big Walk",
+            day=20,
+            context="User: Gram w Big Walk.",
+        )
+        segment = _add_episode(
+            db,
+            conversation_id=1,
+            game_document_id=game.id,
+        )
+        result = await MemoryRecallService(db, memory).recall(
+            query="Big Walk czerwony balon timestamp",
+            game="Big Walk",
+            memory_type=MemoryRecallType.VIDEO,
+        )
+        return result, segment
+
+    result, segment = asyncio.run(scenario())
+
+    assert result.used_recent_fallback is False
+    assert result.matches[0].path == f"{segment.source_uri}?t=18-27"
+    assert result.matches[0].document_type == "video_observation"
+
+
+def test_video_recall_falls_back_to_recent_episode_summary_for_known_game(db):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        _, game = await _add_session(
+            db,
+            memory,
+            conversation_id=1,
+            game_name="Big Walk",
+            day=20,
+            context="User: Gram w Big Walk.",
+        )
+        segment = _add_episode(
+            db,
+            conversation_id=1,
+            game_document_id=game.id,
+        )
+        result = await MemoryRecallService(db, memory).recall(
+            query="nieopisany przedmiot",
+            game="Big Walk",
+            memory_type=MemoryRecallType.VIDEO,
+        )
+        return result, segment
+
+    result, segment = asyncio.run(scenario())
+
+    assert result.used_recent_fallback is True
+    assert [match.path for match in result.matches] == [segment.source_uri]
+    assert result.matches[0].document_type == "episode_summary"
+    assert "leśną ścieżką" in result.matches[0].content

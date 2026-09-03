@@ -12,7 +12,7 @@ from buddy.video.context_butler import (
     build_video_context_butler,
 )
 from buddy.video.context_service import process_video_report_context
-from buddy.video.models import VideoEvent, VideoOverview, VideoReportMode
+from buddy.video.models import EpisodeAnalysis, EpisodeObservation, VideoReportMode
 from buddy.video.storage import (
     claim_video_segment_for_analysis,
     create_video_segment,
@@ -43,7 +43,7 @@ class StubVideoContextButler:
         return StubVideoContextRunResult(self.outputs.pop(0))
 
 
-def _overview_report(
+def _episode_report(
     db,
     tmp_path,
     *,
@@ -67,12 +67,12 @@ def _overview_report(
         ended_at=started_at + timedelta(minutes=2),
     )
     assert claim_video_segment_for_analysis(db, segment.id) is not None
-    overview = VideoOverview(
-        summary=summary,
-        events=[
-            VideoEvent(
+    episode = EpisodeAnalysis(
+        observations=[
+            EpisodeObservation(
                 start_seconds=event_start,
                 end_seconds=event_end,
+                activity="Testowa aktywność.",
                 description=summary,
             )
         ],
@@ -80,10 +80,10 @@ def _overview_report(
     report = save_video_report(
         db,
         segment_id=segment.id,
-        mode=VideoReportMode.OVERVIEW,
+        mode=VideoReportMode.EPISODE,
         provider="google",
         model_name="gemini-3.1-flash-lite",
-        content=overview.model_dump(mode="json"),
+        content=episode.model_dump(mode="json"),
     )
     return segment, report
 
@@ -107,7 +107,7 @@ def test_video_context_butler_uses_its_explicit_configured_model(monkeypatch):
 def test_context_is_a_source_validated_replacement_state(db, tmp_path):
     """The next prompt receives prior state and persists one newer snapshot."""
     conversation_id = create_conversation(db)
-    first_segment, first_report = _overview_report(
+    first_segment, first_report = _episode_report(
         db,
         tmp_path,
         name="first",
@@ -120,6 +120,7 @@ def test_context_is_a_source_validated_replacement_state(db, tmp_path):
     first_butler = StubVideoContextButler(
         [
             VideoContextButlerResult(
+                episode_summary="Gracz znalazł zamknięte drzwi.",
                 changed=True,
                 context="Użytkowniczka znalazła zamknięte drzwi.",
                 sources=[first_source],
@@ -136,7 +137,7 @@ def test_context_is_a_source_validated_replacement_state(db, tmp_path):
         )
     )
 
-    second_segment, second_report = _overview_report(
+    second_segment, second_report = _episode_report(
         db,
         tmp_path,
         name="second",
@@ -149,6 +150,7 @@ def test_context_is_a_source_validated_replacement_state(db, tmp_path):
     second_butler = StubVideoContextButler(
         [
             VideoContextButlerResult(
+                episode_summary="Gracz znalazł klucz przy schodach.",
                 changed=True,
                 context=(
                     "Użytkowniczka znalazła zamknięte drzwi, a później klucz "
@@ -173,7 +175,7 @@ def test_context_is_a_source_validated_replacement_state(db, tmp_path):
 
 def test_no_change_is_persisted_once_without_polluting_context(db, tmp_path):
     """An irrelevant overview gets an idempotency marker but no context text."""
-    segment, report = _overview_report(
+    segment, report = _episode_report(
         db,
         tmp_path,
         name="walking",
@@ -184,6 +186,7 @@ def test_no_change_is_persisted_once_without_polluting_context(db, tmp_path):
     butler = StubVideoContextButler(
         [
             VideoContextButlerResult(
+                episode_summary="Postać przeszła pustym korytarzem.",
                 changed=False,
                 context="Ten tekst ma zostać usunięty.",
                 sources=[segment.source_uri],
@@ -202,7 +205,7 @@ def test_no_change_is_persisted_once_without_polluting_context(db, tmp_path):
 
 
 def test_unassigned_clips_do_not_share_previous_context(db, tmp_path):
-    first_segment, first_report = _overview_report(
+    first_segment, first_report = _episode_report(
         db,
         tmp_path,
         name="unassigned-first",
@@ -213,6 +216,7 @@ def test_unassigned_clips_do_not_share_previous_context(db, tmp_path):
     first_butler = StubVideoContextButler(
         [
             VideoContextButlerResult(
+                episode_summary="Pierwszy niezależny klip.",
                 changed=True,
                 context="Stan pierwszego klipu.",
                 sources=[f"{first_segment.source_uri}?t=1-2"],
@@ -221,7 +225,7 @@ def test_unassigned_clips_do_not_share_previous_context(db, tmp_path):
     )
     asyncio.run(process_video_report_context(db, first_butler, first_report.id))
 
-    _, second_report = _overview_report(
+    _, second_report = _episode_report(
         db,
         tmp_path,
         name="unassigned-second",
@@ -230,7 +234,12 @@ def test_unassigned_clips_do_not_share_previous_context(db, tmp_path):
         event_end=4,
     )
     second_butler = StubVideoContextButler(
-        [VideoContextButlerResult(changed=False)]
+        [
+            VideoContextButlerResult(
+                episode_summary="Drugi niezależny klip.",
+                changed=False,
+            )
+        ]
     )
     asyncio.run(process_video_report_context(db, second_butler, second_report.id))
 
@@ -240,7 +249,7 @@ def test_unassigned_clips_do_not_share_previous_context(db, tmp_path):
 
 def test_invented_video_source_is_rejected(db, tmp_path):
     """The delegate cannot attach context to a video it never received."""
-    _, report = _overview_report(
+    _, report = _episode_report(
         db,
         tmp_path,
         name="invented",
@@ -251,6 +260,7 @@ def test_invented_video_source_is_rejected(db, tmp_path):
     butler = StubVideoContextButler(
         [
             VideoContextButlerResult(
+                episode_summary="Gracz znalazł skrzynię.",
                 changed=True,
                 context="Znaleziono ważną skrzynię.",
                 sources=["video://segment/999?t=1-2"],
@@ -270,7 +280,7 @@ def test_invented_video_source_is_rejected(db, tmp_path):
 def test_late_older_report_cannot_replace_newer_video_context(db, tmp_path):
     """Out-of-order provider completion cannot move observed state backwards."""
     conversation_id = create_conversation(db)
-    newer_segment, newer_report = _overview_report(
+    newer_segment, newer_report = _episode_report(
         db,
         tmp_path,
         name="newer",
@@ -283,6 +293,7 @@ def test_late_older_report_cannot_replace_newer_video_context(db, tmp_path):
     newer_butler = StubVideoContextButler(
         [
             VideoContextButlerResult(
+                episode_summary="Gracz dotarł do wieży.",
                 changed=True,
                 context="Użytkowniczka dotarła do wieży.",
                 sources=[f"{newer_segment.source_uri}?t=20-25"],
@@ -291,7 +302,7 @@ def test_late_older_report_cannot_replace_newer_video_context(db, tmp_path):
     )
     asyncio.run(process_video_report_context(db, newer_butler, newer_report.id))
 
-    _, older_report = _overview_report(
+    _, older_report = _episode_report(
         db,
         tmp_path,
         name="older",
@@ -300,7 +311,16 @@ def test_late_older_report_cannot_replace_newer_video_context(db, tmp_path):
         event_end=15,
         conversation_id=conversation_id,
     )
-    older_butler = StubVideoContextButler([])
+    older_butler = StubVideoContextButler(
+        [
+            VideoContextButlerResult(
+                episode_summary="Gracz był jeszcze przed mostem.",
+                changed=True,
+                context="Gracz jest przed mostem.",
+                sources=["video://segment/2?t=10-15"],
+            )
+        ]
+    )
 
     skipped = asyncio.run(
         process_video_report_context(db, older_butler, older_report.id)
@@ -309,4 +329,5 @@ def test_late_older_report_cannot_replace_newer_video_context(db, tmp_path):
     assert skipped.changed is False
     assert skipped.uncertainty is not None
     assert "spóźniony raport" in skipped.uncertainty
-    assert older_butler.prompts == []
+    assert skipped.episode_summary == "Gracz był jeszcze przed mostem."
+    assert len(older_butler.prompts) == 1

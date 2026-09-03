@@ -11,6 +11,8 @@ from buddy.video.analyzer import (
 )
 from buddy.video.gemini import GeminiVideoAnalyzer, _gemini_json_schema
 from buddy.video.models import (
+    EpisodeAnalysis,
+    EpisodeObservation,
     VideoDetailAnalysis,
     VideoDetailObservation,
     VideoEvent,
@@ -96,6 +98,37 @@ class FakeAsyncClient:
 class FakeClient:
     def __init__(self, files: FakeFiles, models: FakeModels) -> None:
         self.aio = FakeAsyncClient(files, models)
+
+
+def test_gemini_analyzer_creates_detailed_episode_timeline(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"fake video content")
+    episode = EpisodeAnalysis(
+        observations=[
+            EpisodeObservation(
+                start_seconds=0,
+                end_seconds=18,
+                activity="Gracz idzie leśną ścieżką.",
+                location="Las",
+                description="Po obu stronach ścieżki znajdują się drzewa.",
+                visible_objects=["drzewa", "kamienie"],
+            )
+        ],
+        possible_game="Big Walk",
+        confidence=0.8,
+    )
+    files = FakeFiles([types.FileState.ACTIVE])
+    models = FakeModels(types.GenerateContentResponse(parsed=episode))
+    analyzer = GeminiVideoAnalyzer(client=FakeClient(files, models))
+
+    result = asyncio.run(analyzer.analyze_episode(clip))
+
+    assert result == episode
+    assert models.config is not None
+    assert models.config.response_json_schema == _gemini_json_schema(EpisodeAnalysis)
+    assert models.contents is not None
+    assert "szczegółową chronologiczną" in str(models.contents[0])
+    assert files.deleted_names == ["files/test-video"]
 
 
 def test_gemini_analyzer_uploads_waits_parses_and_cleans_up(tmp_path):
@@ -191,18 +224,19 @@ def test_gemini_analyzer_creates_question_specific_detail(tmp_path):
 
 
 def test_gemini_schema_keeps_structure_and_drops_unsupported_constraints():
-    schema = _gemini_json_schema(VideoOverview)
+    schema = _gemini_json_schema(EpisodeAnalysis)
 
     serialized = str(schema)
     assert schema["type"] == "object"
-    assert schema["properties"]["events"]["items"]["type"] == "object"
-    assert schema["properties"]["events"]["items"]["properties"][
-        "importance"
-    ]["enum"] == ["low", "medium", "high"]
+    observation_schema = schema["properties"]["observations"]["items"]
+    assert observation_schema["type"] == "object"
+    assert observation_schema["properties"]["visible_objects"]["items"] == {
+        "type": "string"
+    }
     assert schema["properties"]["possible_game"] == {"type": "string"}
     assert schema["properties"]["confidence"] == {"type": "number"}
     assert "description" not in schema
-    assert "description" not in schema["properties"]["events"]["items"]
+    assert "description" not in observation_schema
     for unsupported in (
         "$defs",
         "$ref",

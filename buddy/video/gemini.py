@@ -13,6 +13,8 @@ from buddy.config import MODELS, SUPPORTED_VIDEO_MIME_TYPES, VIDEO, Model
 from buddy.prompts import (
     VIDEO_DETAIL_ANALYZER_INSTRUCTIONS,
     VIDEO_DETAIL_REQUEST,
+    VIDEO_EPISODE_ANALYZER_INSTRUCTIONS,
+    VIDEO_EPISODE_REQUEST,
     VIDEO_OVERVIEW_ANALYZER_INSTRUCTIONS,
     VIDEO_OVERVIEW_REQUEST,
 )
@@ -20,7 +22,7 @@ from buddy.video.analyzer import (
     InvalidVideoFileError,
     VideoProviderError,
 )
-from buddy.video.models import VideoDetailAnalysis, VideoOverview
+from buddy.video.models import EpisodeAnalysis, VideoDetailAnalysis, VideoOverview
 
 StructuredVideoResult = TypeVar("StructuredVideoResult", bound=BaseModel)
 
@@ -65,7 +67,7 @@ class GeminiVideoAnalyzer:
     def __init__(
         self,
         *,
-        model: Model | str = MODELS.video_overview,
+        model: Model | str = MODELS.video_episode,
         client: _GenAIClient | None = None,
         processing_timeout_seconds: float = VIDEO.processing_timeout_seconds,
         poll_interval_seconds: float = VIDEO.poll_interval_seconds,
@@ -88,6 +90,16 @@ class GeminiVideoAnalyzer:
     @property
     def model_name(self) -> str:
         return self._model_name
+
+    async def analyze_episode(self, video_path: Path) -> EpisodeAnalysis:
+        """Create a detailed searchable timeline for one complete episode."""
+        response = await self._generate_structured(
+            video_path,
+            request=VIDEO_EPISODE_REQUEST,
+            instructions=VIDEO_EPISODE_ANALYZER_INSTRUCTIONS,
+            response_schema=EpisodeAnalysis,
+        )
+        return _parse_structured(response, EpisodeAnalysis, "episode analysis")
 
     async def analyze_overview(self, video_path: Path) -> VideoOverview:
         """Upload one local video, analyze it, and remove the temporary upload."""

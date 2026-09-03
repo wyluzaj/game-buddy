@@ -13,12 +13,13 @@ from buddy.prompts import (
     VIDEO_CONTEXT_BUTLER_INSTRUCTIONS,
     VIDEO_CONTEXT_BUTLER_PROMPT,
 )
-from buddy.video.models import VideoContextUpdate, VideoOverview, VideoSegment
+from buddy.video.models import EpisodeAnalysis, VideoContextUpdate, VideoSegment
 
 
 class VideoContextButlerResult(BaseModel):
-    """Small replacement state proposed from the newest overview."""
+    """Durable episode summary plus an optional replacement gameplay state."""
 
+    episode_summary: str = Field(min_length=1, max_length=VIDEO.episode_summary_chars)
     changed: bool
     context: str = Field(default="", max_length=VIDEO.context_chars)
     sources: list[str] = Field(
@@ -71,41 +72,28 @@ def build_video_context_butler(
 
 def build_video_context_prompt(
     segment: VideoSegment,
-    overview: VideoOverview,
+    episode: EpisodeAnalysis,
     previous: VideoContextUpdate | None,
 ) -> BuiltVideoContextPrompt:
     """Attach stable source URIs to every selectable piece of evidence."""
     base_source = segment.source_uri
-    events = [
+    observations = [
         {
             "source": _timestamp_source(
                 base_source,
-                event.start_seconds,
-                event.end_seconds,
-            ),
-            **event.model_dump(mode="json"),
-        }
-        for event in overview.events
-    ]
-    visible_text = [
-        {
-            "source": _timestamp_source(
-                base_source,
-                observation.timestamp_seconds,
-                observation.timestamp_seconds,
+                observation.start_seconds,
+                observation.end_seconds,
             ),
             **observation.model_dump(mode="json"),
         }
-        for observation in overview.visible_text
+        for observation in episode.observations
     ]
     new_evidence = {
         "segment_source": base_source,
-        "summary": overview.summary,
-        "possible_game": overview.possible_game,
-        "confidence": overview.confidence,
-        "events": events,
-        "visible_text": visible_text,
-        "uncertainties": overview.uncertainties,
+        "possible_game": episode.possible_game,
+        "confidence": episode.confidence,
+        "observations": observations,
+        "uncertainties": episode.uncertainties,
     }
     previous_state = (
         {"context": previous.context, "sources": previous.sources}
@@ -113,9 +101,8 @@ def build_video_context_prompt(
         else {"context": "", "sources": []}
     )
     allowed_sources = {base_source}
-    allowed_sources.update(str(event["source"]) for event in events)
     allowed_sources.update(
-        str(observation["source"]) for observation in visible_text
+        str(observation["source"]) for observation in observations
     )
     if previous is not None:
         allowed_sources.update(previous.sources)
@@ -126,7 +113,7 @@ def build_video_context_prompt(
                 ensure_ascii=False,
                 indent=2,
             ),
-            video_overview=json.dumps(
+            episode_analysis=json.dumps(
                 new_evidence,
                 ensure_ascii=False,
                 indent=2,
@@ -142,22 +129,37 @@ def validate_video_context_result(
     allowed_sources: set[str],
 ) -> VideoContextButlerResult:
     """Prevent invented video links and normalize no-change decisions."""
+    summary = result.episode_summary.strip()
     if not result.changed:
-        return result.model_copy(update={"context": "", "sources": []})
+        return result.model_copy(
+            update={
+                "episode_summary": summary,
+                "context": "",
+                "sources": [],
+            }
+        )
 
     context = result.context.strip()
     sources = list(dict.fromkeys(result.sources))
     if not context or not sources:
         return VideoContextButlerResult(
+            episode_summary=summary,
             changed=False,
             uncertainty="Video Context Butler nie uzasadnił zmiany źródłami.",
         )
     if any(source not in allowed_sources for source in sources):
         return VideoContextButlerResult(
+            episode_summary=summary,
             changed=False,
             uncertainty="Video Context Butler wskazał nieznane źródło wideo.",
         )
-    return result.model_copy(update={"context": context, "sources": sources})
+    return result.model_copy(
+        update={
+            "episode_summary": summary,
+            "context": context,
+            "sources": sources,
+        }
+    )
 
 
 def _timestamp_source(base_source: str, start: float, end: float) -> str:

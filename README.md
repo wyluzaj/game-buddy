@@ -14,7 +14,8 @@ Pydantic Logfire.
 - Automatic consolidation of completed sessions into long-term memory.
 - Searchable session reports and game-specific memory profiles.
 - Source-aware memory recall reduced by a dedicated Context Butler.
-- Gemini overview and on-demand detailed analysis of local gameplay clips.
+- Detailed Gemini episode timelines and on-demand re-analysis of one selected clip.
+- Searchable timestamped episode observations and durable brief descriptions.
 - Bounded Video Context Butler state injected into the correct chat session.
 - Video observations preserved in session reports and game-specific memory.
 - Same-tier fallback models for chat, short-term summarization, and long-term analysis.
@@ -63,34 +64,60 @@ is retained for persistence and as a fallback source for memory analysis.
 
 ## Gameplay video analysis
 
-Video support has two analysis modes:
+Video support stores two descriptions of every newly analyzed episode and offers a
+third, on-demand mode:
 
-1. **Overview** uploads a completed local clip to Gemini and stores a structured report
-   containing a summary, timestamped events, visible text, confidence, and uncertainties.
-2. **Detail** is invoked by the main agent only when the user asks about a specific visual
-   or audible detail and a `video://segment/...` source is available. It re-reads the
-   requested clip or timestamp range and persists the question-specific answer.
+1. **Full episode description** uploads a completed local clip to Gemini once and stores a
+   detailed chronological timeline: actions, locations, objects, screen text, uncertainties,
+   a possible game name, and confidence. Each observation is indexed for later text search.
+2. **Brief episode description** is produced from that timeline by Video Butler. It preserves
+   important places, events, discoveries, and problems for historical recall. Separately,
+   Butler maintains a short current-state snapshot for the next chat turn.
+3. **Detail re-analysis** is invoked only when stored observations do not answer a concrete
+   visual or audible question and one `video://segment/...` candidate is available. It
+   re-reads only that segment or timestamp range and caches the question-specific answer.
 
-The overview flow is:
+The episode flow is:
 
 ```text
 local clip
   -> video_segments metadata in data/chatbot.db
-  -> Gemini VideoOverview in video_reports
-  -> Video Context Butler replacement snapshot in video_context_updates
+  -> Gemini EpisodeAnalysis timeline in video_reports
+  -> normalized observations in video_observations + FTS5 search index
+  -> Video Butler brief description + replacement snapshot in video_context_updates
   -> next run of the matching conversation receives one explicit screen observation
   -> successful injection sets injected_at
 ```
 
-The Butler keeps a single replacement state instead of appending every clip. Ordinary
-movement and duplicate observations can produce `changed=false`. Timestamped source links
-are generated and validated by the application; the model cannot invent arbitrary local
-paths. The `analyze_video_detail` tool accepts only application-owned
-`video://segment/<id>` URIs and caches identical question/range reports.
+The full timeline and brief description remain durable even when the current-state decision
+is `changed=false`. The Butler keeps a single replacement state instead of appending every
+clip; it includes at most six important facts and is bounded to 1,000 characters. Ordinary
+movement still belongs in the timeline when it identifies a route, landmark, or location,
+but duplicate or irrelevant movement need not change current chat context.
 
-Important video observations are added to the completed session report with their source
-URIs. They may update the profile of a game explicitly associated with the conversation,
-but they are not treated as user statements and cannot create global facts in `MEMORY.md`.
+For questions about older gameplay, `recall_memory(memory_type="video")` searches timestamped
+observations first. If there is no exact text match and a game is known, it returns a bounded
+set of recent brief episode descriptions. The main agent may then request detail analysis
+for one concrete source. It does not ask Gemini to scan an arbitrary two-hour recording or
+all stored clips. There is intentionally no visual frame/embedding index in this version,
+so an object omitted from the detailed timeline can only be recovered by re-analyzing a
+reasonably narrowed candidate episode.
+
+Episode search first uses all supplied keywords for precision. If that produces no result,
+it retries with a bounded any-keyword query while preserving game and date filters. This
+makes retrieval tolerant of agent-added words such as a game title or `timestamp`.
+
+Timestamped source links are generated and validated by the application; the model cannot
+invent arbitrary local paths. The `analyze_video_detail` tool accepts only application-owned
+`video://segment/<id>` URIs and caches identical question/range reports. Provider observations
+outside the requested range are discarded. If none remain, the tool returns an uncertain,
+controlled answer instead of trusting invalid timestamps. Detail prompts require absolute
+decimal seconds (`00:07` means `7.0`, never `0.07`), and the service repairs provider output
+when its textual answer proves that `mm.ss` notation was returned.
+
+Brief episode descriptions are added to the completed session report with their source
+URIs. They may update the profile of a game explicitly associated with the episode, but
+they are not treated as user statements and cannot create global facts in `MEMORY.md`.
 
 ### Manual video flow
 
@@ -101,17 +128,27 @@ the active ID:
 python -c "import sqlite3; c=sqlite3.connect('data/chatbot.db'); print(c.execute('SELECT id FROM conversations WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1').fetchone())"
 ```
 
-Analyze a completed recording and associate it with that conversation:
+Analyze a completed recording and associate it with that conversation and game:
 
 ```powershell
-python -m buddy.video.cli "C:\path\to\recording.mp4" --duration-seconds 120 --conversation-id 1
+python -m buddy.video.cli "C:\path\to\recording.mp4" --conversation-id 1 --game "Big Walk"
 ```
+
+`--game` is optional. When supplied, it creates or reuses that confirmed game profile and
+links the episode to it. Without `--game`, a high-confidence provider result (at least 0.9)
+may link the episode only to an exact, already existing game profile; it never creates a new
+profile from an unconfirmed guess. Use `--memory-database` together with `--database` when
+testing against non-default database files.
+For MP4, MOV, and M4V files the CLI reads duration directly from the container. Use
+`--duration-seconds` only to override incorrect metadata or for another supported format;
+unsupported containers fall back to `VIDEO.manual_duration_seconds` (120 seconds).
 
 The next user turn receives the compact observed-game state. If the user asks for a detail
 and the state contains a source URI, the agent can call `analyze_video_detail` automatically.
 
-Automatic window-specific recording, segmentation, and time-driven agent rounds are not
-part of this branch; they belong to the follow-up capture/automation task.
+Automatic window-specific recording, segmentation, folder watching, active-game profile
+injection, and time-driven agent rounds are not part of this branch; they belong to the
+follow-up capture/automation task.
 
 ### Tool-result compaction
 
@@ -193,13 +230,13 @@ workflow.
    - [Google AI Studio](https://aistudio.google.com/apikey)
    - [OpenRouter](https://openrouter.ai/keys)
 
-   `GOOGLE_API_KEY` is required by the default chat model and by the configured short- and
-   long-term memory models. `OPENROUTER_API_KEY` is required when an OpenRouter model or
-   fallback is used.
+   `GOOGLE_API_KEY` is required by the configured short- and long-term memory models and
+   native video analysis. `OPENROUTER_API_KEY` is required by the default chat model and
+   whenever an OpenRouter fallback is used.
 
    | Variable | Required | Meaning |
    | --- | --- | --- |
-   | `GOOGLE_API_KEY` | Yes for default models and video | Gemini text and uploaded-video analysis |
+   | `GOOGLE_API_KEY` | Yes for configured memory models and video | Gemini text and uploaded-video analysis |
    | `OPENROUTER_API_KEY` | Yes for default chat/fallbacks | OpenRouter chat models |
    | `LOGFIRE_TOKEN` | No | Exports Pydantic AI traces to the configured Logfire project |
    | `BUDDY_DEBUG` | No | Set to `true` to print tracebacks at terminal process boundaries |
@@ -229,7 +266,7 @@ The current model catalog is defined in `buddy/config.py`:
 | Short-term summarizer | `google:gemini-3.1-flash-lite` | Other configured models in the `medium` tier |
 | Long-term and game-memory analyzers | `google:gemini-3.1-flash-lite` | Other configured models in the `medium` tier |
 | Memory and video Context Butlers | `google:gemini-3.1-flash-lite` | Other configured models in the `medium` tier |
-| Native overview/detail video analysis | `gemini-3.1-flash-lite` | Provider errors are surfaced for retry; no cross-provider video fallback |
+| Native episode/detail video analysis | `gemini-3.1-flash-lite` | Provider errors are surfaced for retry; no cross-provider video fallback |
 
 The main chat and text analyzers use the shared `build_model()` function. It preserves the
 configured model as primary and adds other models from the same tier as ordered fallbacks.
@@ -245,10 +282,13 @@ Important settings:
 | `MODELS.short_term_memory` | Gemini 3.1 Flash Lite | Model generating timed summaries |
 | `MODELS.long_term_memory` | Gemini 3.1 Flash Lite | Model curating durable and game memory |
 | `MODELS.memory_context_butler` | Gemini 3.1 Flash Lite | Model reducing recalled documents |
-| `MODELS.video_overview` | Gemini 3.1 Flash Lite | Native fast clip analysis |
+| `MODELS.video_episode` | Gemini 3.1 Flash Lite | Native full episode-timeline analysis |
 | `MODELS.video_detail` | Gemini 3.1 Flash Lite | Native question-specific clip analysis |
 | `MODELS.video_context_butler` | Gemini 3.1 Flash Lite | Model maintaining current gameplay state |
 | `STORAGE.memory_database_path` | `data/memory.db` | Harness Memory SQLite store |
+| `VIDEO.episode_summary_chars` | `1500` | Maximum durable brief-description size |
+| `VIDEO.context_chars` | `1000` | Maximum current-state context size |
+| `VIDEO.game_detection_confidence` | `0.9` | Minimum confidence for linking an existing game profile |
 
 All code-level settings are immutable dataclass sections in `buddy/config.py`: `MODELS`,
 `AGENT`, `RUNTIME`, `STORAGE`, `MEMORY`, and `VIDEO`. Provider credentials and runtime-only
@@ -274,7 +314,7 @@ or provide `LOGFIRE_TOKEN` as an environment variable. Local `.logfire` credenti
 
 | Path | Contents |
 | --- | --- |
-| `data/chatbot.db` | Conversations, raw messages, memory index/relations, video segment metadata, overview/detail reports, and compact video-context updates |
+| `data/chatbot.db` | Conversations, raw messages, memory index/relations, segment metadata, full episode/detail reports, searchable observations, brief descriptions, and compact video context |
 | `data/memory.db` | Harness SQLite store containing logical `main/MEMORY.md`, `main/sessions/*.md`, and `main/games/*.md` documents |
 | Local recording path | Original video bytes; the database stores the normalized path and stable `video://` ID, not the video blob |
 
@@ -285,7 +325,7 @@ file in the repository.
 
 - Conversations, memory documents, reports, and normalized recording paths are stored
   locally in the two SQLite databases. Original video bytes remain in their source files.
-- Video overview and detail requests upload the selected clip to Google's Gemini service.
+- Video episode and detail requests upload the selected clip to Google's Gemini service.
   The application requests deletion of the provider-side temporary file after generation,
   including failure paths, but provider retention is ultimately governed by Google's terms.
 - Logfire receives traces only when `LOGFIRE_TOKEN` or local Logfire credentials are present.
@@ -313,8 +353,9 @@ pytest --cov=buddy --cov-report=term-missing --cov-fail-under=80 -q
 ```
 
 The tests cover model fallback selection, database migrations, timed compaction, Harness
-memory, session/game indexing and recall, provider cleanup, idempotent video analysis,
-source validation, context replacement/injection, and detailed video report caching.
+memory, session/game/video recall, provider cleanup, idempotent episode analysis, searchable
+observations, game association, source validation, context replacement/injection, and
+detailed video report caching.
 CI runs these checks on Python 3.10 and 3.14. Pyright checks production code; test doubles
 are validated through execution. When changing dependencies, update `pyproject.toml`, rebuild
 the environment, regenerate `requirements-lock.txt`, and run all three commands.
@@ -327,6 +368,11 @@ the environment, regenerate `requirements-lock.txt`, and run all three commands.
 - **Video analysis fails immediately:** verify that the file exists, has a supported suffix,
   is no longer being written, and that `GOOGLE_API_KEY` is valid. Retry with
   `BUDDY_DEBUG=true` for a traceback.
+- **An old clip has only an overview:** reports made before the episode-timeline migration
+  remain readable, but they do not gain a searchable full timeline without re-analysis.
+- **Polish characters are broken only in redirected PowerShell logs:** the SQLite value may
+  still be correct. Before capturing another log, run `chcp 65001` and set
+  `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`.
 - **SQLite reports a lock:** close other Buddy or video-analysis processes and retry. Do not
   copy or delete either database while a process is writing it.
 - **Memory was not updated:** finish the chat cleanly, then restart Buddy. Failed jobs remain

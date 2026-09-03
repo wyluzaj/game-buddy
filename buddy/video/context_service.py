@@ -11,10 +11,12 @@ from buddy.video.context_butler import (
     validate_video_context_result,
 )
 from buddy.video.models import (
+    EpisodeAnalysis,
     VideoContextUpdate,
     VideoOverview,
     VideoReportMode,
     VideoSegment,
+    episode_from_legacy_overview,
 )
 from buddy.video.storage import (
     get_latest_video_context,
@@ -36,7 +38,7 @@ async def process_video_report_context(
     *,
     usage: RunUsage | None = None,
 ) -> VideoContextUpdate:
-    """Reduce one overview into a bounded replacement state exactly once."""
+    """Reduce one episode into a summary and replacement state exactly once."""
     existing = get_video_context_update_for_report(conn, report_id)
     if existing is not None:
         return existing
@@ -44,19 +46,31 @@ async def process_video_report_context(
     report = get_video_report(conn, report_id)
     if report is None:
         raise ValueError(f"Unknown video report: {report_id}.")
-    if report.mode is not VideoReportMode.OVERVIEW:
-        raise ValueError("Only overview reports can update current video context.")
+    if report.mode not in (VideoReportMode.EPISODE, VideoReportMode.OVERVIEW):
+        raise ValueError("Only primary reports can update current video context.")
     segment = get_video_segment(conn, report.segment_id)
     if segment is None:
-        raise VideoContextStateError("The overview's source segment is missing.")
+        raise VideoContextStateError("The episode's source segment is missing.")
     try:
-        overview = VideoOverview.model_validate(report.content)
+        if report.mode is VideoReportMode.EPISODE:
+            episode = EpisodeAnalysis.model_validate(report.content)
+        else:
+            episode = episode_from_legacy_overview(
+                VideoOverview.model_validate(report.content),
+                duration_seconds=segment.duration_seconds,
+            )
     except ValidationError as exc:
-        raise VideoContextStateError("The overview report is invalid.") from exc
+        raise VideoContextStateError("The episode report is invalid.") from exc
 
     previous = get_latest_video_context(
         conn,
         conversation_id=segment.conversation_id,
+    )
+    built = build_video_context_prompt(segment, episode, previous)
+    run_result = await butler.run(built.prompt, usage=usage)
+    validated = validate_video_context_result(
+        run_result.output,
+        allowed_sources=built.allowed_sources,
     )
     if previous is not None and _is_newer_than_current(
         conn,
@@ -66,6 +80,7 @@ async def process_video_report_context(
         return save_video_context_update(
             conn,
             report_id=report.id,
+            episode_summary=validated.episode_summary,
             changed=False,
             context="",
             sources=[],
@@ -74,16 +89,11 @@ async def process_video_report_context(
                 "zaktualizował już bieżący kontekst."
             ),
         )
-    built = build_video_context_prompt(segment, overview, previous)
-    run_result = await butler.run(built.prompt, usage=usage)
-    validated = validate_video_context_result(
-        run_result.output,
-        allowed_sources=built.allowed_sources,
-    )
     try:
         return save_video_context_update(
             conn,
             report_id=report.id,
+            episode_summary=validated.episode_summary,
             changed=validated.changed,
             context=validated.context,
             sources=validated.sources,

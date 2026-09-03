@@ -3,7 +3,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from buddy.database import create_conversation
+from buddy.memory.index import MemoryDocumentType, index_memory_document
 from buddy.video.models import (
+    EpisodeAnalysis,
+    EpisodeObservation,
     VideoReportMode,
     VideoSegmentStatus,
 )
@@ -11,10 +14,12 @@ from buddy.video.storage import (
     VideoStorageDataError,
     claim_video_segment_for_analysis,
     create_video_segment,
+    get_episode_observations,
     get_video_report,
     get_video_reports,
     get_video_segment,
     save_video_report,
+    search_episode_observations,
     update_video_segment_status,
 )
 
@@ -202,3 +207,119 @@ def test_corrupt_report_json_raises_a_storage_boundary_error(db):
 
     with pytest.raises(VideoStorageDataError, match="Stored video report"):
         get_video_report(db, report.id)
+
+
+def test_episode_report_persists_and_indexes_detailed_observations(db):
+    segment = _recorded_segment(db)
+    assert claim_video_segment_for_analysis(db, segment.id) is not None
+    analysis = EpisodeAnalysis(
+        observations=[
+            EpisodeObservation(
+                start_seconds=18,
+                end_seconds=32,
+                activity="Wejście do nowej lokacji.",
+                location="Wyspa otoczona wodą",
+                description="Gracz mija czerwone schody przy wejściu do tunelu.",
+                visible_objects=["czerwone schody", "kamienny tunel"],
+            )
+        ],
+        possible_game="Big Walk",
+        confidence=0.9,
+    )
+
+    report = save_video_report(
+        db,
+        segment_id=segment.id,
+        mode=VideoReportMode.EPISODE,
+        provider="google",
+        model_name="gemini-3.1-flash-lite",
+        content=analysis.model_dump(mode="json"),
+    )
+
+    completed = get_video_segment(db, segment.id)
+    observations = get_episode_observations(db, segment.id)
+    matches = search_episode_observations(db, query="czerwone schody")
+    assert completed is not None
+    assert completed.status is VideoSegmentStatus.COMPLETED
+    assert report.mode is VideoReportMode.EPISODE
+    assert observations == matches
+    assert observations[0].source_uri == f"{segment.source_uri}?t=18-32"
+
+
+def test_episode_search_can_be_limited_to_a_confirmed_game(db):
+    first_game = index_memory_document(
+        db,
+        document_type=MemoryDocumentType.GAME,
+        path="main/games/big-walk.md",
+        title="Big Walk",
+        summary="Big Walk profile",
+        body="Big Walk",
+    )
+    second_game = index_memory_document(
+        db,
+        document_type=MemoryDocumentType.GAME,
+        path="main/games/other-game.md",
+        title="Other Game",
+        summary="Other profile",
+        body="Other Game",
+    )
+    started_at = datetime(2026, 8, 29, 18, 0, tzinfo=timezone.utc)
+    segments = [
+        create_video_segment(
+            db,
+            file_path=f"game-{game_id}.mp4",
+            started_at=started_at + timedelta(minutes=index * 2),
+            ended_at=started_at + timedelta(minutes=index * 2 + 2),
+            game_document_id=game_id,
+        )
+        for index, game_id in enumerate((first_game.id, second_game.id))
+    ]
+    for segment in segments:
+        assert claim_video_segment_for_analysis(db, segment.id) is not None
+        save_video_report(
+            db,
+            segment_id=segment.id,
+            mode=VideoReportMode.EPISODE,
+            provider="stub",
+            model_name="stub",
+            content=EpisodeAnalysis(
+                observations=[
+                    EpisodeObservation(
+                        start_seconds=0,
+                        end_seconds=10,
+                        activity="Eksploracja.",
+                        description="Widoczny czerwony balon.",
+                        visible_objects=["czerwony balon"],
+                    )
+                ]
+            ).model_dump(mode="json"),
+        )
+
+    matches = search_episode_observations(
+        db,
+        query="czerwony balon",
+        game_document_id=first_game.id,
+    )
+
+    assert [match.segment_id for match in matches] == [segments[0].id]
+
+
+def test_video_segment_rejects_a_non_game_memory_document(db):
+    session = index_memory_document(
+        db,
+        document_type=MemoryDocumentType.SESSION,
+        path="main/sessions/session-1.md",
+        title="Session 1",
+        summary="Session",
+        body="Session",
+    )
+    started_at = datetime(2026, 8, 29, 18, 0, tzinfo=timezone.utc)
+
+    with pytest.raises(ValueError, match="is not an indexed game profile"):
+        create_video_segment(
+            db,
+            file_path="invalid-game.mp4",
+            started_at=started_at,
+            ended_at=started_at + timedelta(minutes=2),
+            game_document_id=session.id,
+        )

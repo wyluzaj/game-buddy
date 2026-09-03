@@ -6,7 +6,6 @@ import pytest
 
 from buddy.database import create_conversation
 from buddy.video.detail_service import (
-    VideoDetailStateError,
     analyze_video_detail_source,
     parse_video_source,
 )
@@ -126,7 +125,7 @@ def test_video_source_parser_rejects_external_unknown_and_oversized_ranges(
         parse_video_source(db, f"{segment.source_uri}?t=10-40")
 
 
-def test_detail_evidence_cannot_escape_requested_range(db, tmp_path):
+def test_out_of_range_detail_evidence_is_removed_and_reported(db, tmp_path):
     segment = _completed_segment(db, tmp_path)
     analyzer = StubDetailAnalyzer(
         [
@@ -143,21 +142,101 @@ def test_detail_evidence_cannot_escape_requested_range(db, tmp_path):
         ]
     )
 
-    with pytest.raises(VideoDetailStateError, match="outside"):
-        asyncio.run(
-            analyze_video_detail_source(
-                db,
-                analyzer,
-                source_uri=f"{segment.source_uri}?t=10-20",
-                question="Co widać?",
-            )
+    result = asyncio.run(
+        analyze_video_detail_source(
+            db,
+            analyzer,
+            source_uri=f"{segment.source_uri}?t=10-20",
+            question="Co widać?",
         )
+    )
 
-    assert get_video_reports(
+    assert result.answer == (
+        "Nie udało się potwierdzić odpowiedzi w żądanym zakresie nagrania."
+    )
+    assert result.sources == [f"{segment.source_uri}?t=10-20"]
+    assert "Odrzucono 1 obserwację" in result.uncertainties[-1]
+    reports = get_video_reports(
         db,
         segment.id,
         mode=VideoReportMode.DETAIL,
-    ) == []
+    )
+    assert len(reports) == 1
+    assert reports[0].content["observations"] == []
+
+
+def test_valid_detail_evidence_survives_invalid_provider_timestamp(db, tmp_path):
+    segment = _completed_segment(db, tmp_path)
+    analyzer = StubDetailAnalyzer(
+        [
+            VideoDetailAnalysis(
+                answer="W zakresie był czerwony balon.",
+                observations=[
+                    VideoDetailObservation(
+                        start_seconds=5,
+                        end_seconds=9,
+                        description="Dowód spoza zakresu.",
+                    ),
+                    VideoDetailObservation(
+                        start_seconds=12,
+                        end_seconds=13,
+                        description="Czerwony balon.",
+                    ),
+                ],
+            )
+        ]
+    )
+
+    result = asyncio.run(
+        analyze_video_detail_source(
+            db,
+            analyzer,
+            source_uri=f"{segment.source_uri}?t=10-20",
+            question="Gdzie był czerwony balon?",
+        )
+    )
+
+    assert result.answer == "W zakresie był czerwony balon."
+    assert result.sources == [f"{segment.source_uri}?t=12-13"]
+    assert "Odrzucono 1 obserwację" in result.uncertainties[-1]
+
+
+def test_minute_decimal_provider_timestamps_are_normalized(db, tmp_path):
+    segment = _completed_segment(db, tmp_path)
+    analyzer = StubDetailAnalyzer(
+        [
+            VideoDetailAnalysis(
+                answer="Symbole pojawiły się w 0:07 i 0:15.",
+                observations=[
+                    VideoDetailObservation(
+                        start_seconds=0.07,
+                        end_seconds=0.08,
+                        description="Pierwszy symbol.",
+                    ),
+                    VideoDetailObservation(
+                        start_seconds=0.15,
+                        end_seconds=0.16,
+                        description="Drugi symbol.",
+                    ),
+                ],
+            )
+        ]
+    )
+
+    result = asyncio.run(
+        analyze_video_detail_source(
+            db,
+            analyzer,
+            source_uri=segment.source_uri,
+            question="Kiedy pojawiły się symbole?",
+        )
+    )
+
+    assert result.sources == [
+        f"{segment.source_uri}?t=7-8",
+        f"{segment.source_uri}?t=15-16",
+    ]
+    assert "Znormalizowano timestampy" in result.uncertainties[-1]
 
 
 def test_concurrent_identical_detail_requests_call_provider_once(db, tmp_path):

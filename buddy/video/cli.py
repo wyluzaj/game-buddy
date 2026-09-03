@@ -13,9 +13,12 @@ from pydantic_ai.exceptions import AgentRunError
 
 from buddy.config import STORAGE, VIDEO
 from buddy.database import init_db
+from buddy.memory.game import ensure_game_document
+from buddy.memory.long_term import create_long_term_memory
 from buddy.video.analyzer import VideoAnalysisError
 from buddy.video.context_butler import VideoContextButler, build_video_context_butler
 from buddy.video.gemini import GeminiVideoAnalyzer
+from buddy.video.metadata import detect_video_duration
 from buddy.video.pipeline import VideoProcessingOutcome, process_video_file
 
 
@@ -27,8 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--duration-seconds",
         type=float,
-        default=VIDEO.manual_duration_seconds,
-        help="Recorded duration used for timeline metadata (default: 120).",
+        default=None,
+        help="Override detected duration; unsupported containers default to 120.",
     )
     parser.add_argument(
         "--conversation-id",
@@ -37,9 +40,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional existing conversation ID to associate with the segment.",
     )
     parser.add_argument(
+        "--game",
+        default=None,
+        help="Optional game title used to create/reuse and link its memory profile.",
+    )
+    parser.add_argument(
         "--database",
         default=STORAGE.chat_database_path,
         help="SQLite database path (default: data/chatbot.db).",
+    )
+    parser.add_argument(
+        "--memory-database",
+        default=STORAGE.memory_database_path,
+        help="Harness Memory database path (default: data/memory.db).",
     )
     return parser
 
@@ -47,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Analyze one file and print a concise human-readable report."""
     args = build_parser().parse_args(argv)
-    if args.duration_seconds <= 0:
+    if args.duration_seconds is not None and args.duration_seconds <= 0:
         print("Error: --duration-seconds must be positive.", file=sys.stderr)
         return 2
 
@@ -56,8 +69,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: video file does not exist: {video_path}", file=sys.stderr)
         return 2
 
+    duration_seconds = args.duration_seconds
+    if duration_seconds is None:
+        duration_seconds = (
+            detect_video_duration(video_path) or VIDEO.manual_duration_seconds
+        )
     ended_at = datetime.fromtimestamp(video_path.stat().st_mtime, tz=timezone.utc)
-    started_at = ended_at - timedelta(seconds=args.duration_seconds)
+    started_at = ended_at - timedelta(seconds=duration_seconds)
 
     load_dotenv()
     conn = init_db(args.database)
@@ -69,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
                 started_at=started_at,
                 ended_at=ended_at,
                 conversation_id=args.conversation_id,
+                game=args.game,
+                memory_database=args.memory_database,
             )
         )
     except (
@@ -94,7 +114,14 @@ async def _run_analysis(
     started_at: datetime,
     ended_at: datetime,
     conversation_id: int | None,
+    game: str | None,
+    memory_database: str | Path,
 ) -> VideoProcessingOutcome:
+    game_document_id = None
+    if game is not None:
+        memory = create_long_term_memory(memory_database)
+        game_document = await ensure_game_document(conn, memory, game)
+        game_document_id = game_document.id
     context_butler = build_video_context_butler()
     async with GeminiVideoAnalyzer() as analyzer:
         return await process_video_file(
@@ -105,6 +132,7 @@ async def _run_analysis(
             started_at=started_at,
             ended_at=ended_at,
             conversation_id=conversation_id,
+            game_document_id=game_document_id,
         )
 
 
@@ -112,6 +140,8 @@ def _print_outcome(outcome: VideoProcessingOutcome) -> None:
     analysis = outcome.analysis
     print(f"Segment: {analysis.segment.id} ({analysis.segment.source_uri})")
     print(f"Status: {analysis.segment.status.value}")
+    if analysis.segment.game_document_id is not None:
+        print(f"Game profile id: {analysis.segment.game_document_id}")
     print(f"Model: {analysis.report.provider}/{analysis.report.model_name}")
     print(
         "Report: "
@@ -121,17 +151,18 @@ def _print_outcome(outcome: VideoProcessingOutcome) -> None:
             else "created"
         )
     )
-    print(f"Summary: {analysis.overview.summary}")
-    if analysis.overview.events:
-        print("Events:")
-        for event in analysis.overview.events:
+    if outcome.context_update.episode_summary:
+        print(f"Episode summary: {outcome.context_update.episode_summary}")
+    if analysis.episode.observations:
+        print("Episode timeline:")
+        for observation in analysis.episode.observations:
             print(
-                f"  - {event.start_seconds:.1f}-{event.end_seconds:.1f}s "
-                f"[{event.importance.value}]: {event.description}"
+                f"  - {observation.start_seconds:.1f}-"
+                f"{observation.end_seconds:.1f}s: {observation.description}"
             )
-    if analysis.overview.uncertainties:
+    if analysis.episode.uncertainties:
         print("Uncertainties:")
-        for uncertainty in analysis.overview.uncertainties:
+        for uncertainty in analysis.episode.uncertainties:
             print(f"  - {uncertainty}")
     context_update = outcome.context_update
     print(

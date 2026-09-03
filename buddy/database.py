@@ -12,7 +12,7 @@ _CONVERSATION_COLUMNS: dict[str, str] = {
     "compacted_history": "TEXT",
     "memory_analyzed_at": "TIMESTAMP",
 }
-LATEST_SCHEMA_VERSION = 3
+LATEST_SCHEMA_VERSION = 5
 
 
 def _open_connection(db_path: str) -> sqlite3.Connection:
