@@ -180,6 +180,19 @@ turns global facts into Markdown. This removes substring-based deletion of model
 
 ## Storage map
 
+### Read-only audit export
+
+```text
+python -m buddy.audit
+  -> opens data/chatbot.db in SQLite read-only mode
+  -> renders application tables as Unicode JSON lines
+  -> lists and reads logical main/* documents from data/memory.db
+  -> writes both audit files directly with Python encoding="utf-8"
+```
+
+This avoids depending on the active PowerShell code page and never migrates or mutates the
+chat database during inspection.
+
 ### `data/chatbot.db`
 
 ```text
@@ -258,6 +271,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/main.py` | Application composition, terminal loop, startup consolidation, session shutdown | Coordinates chat, memory, video injection, and persistence |
 | `buddy/config.py` | Central immutable sections for models, runtime diagnostics, response language, agent, storage, memory, video, and MIME types | Used by all factories, services, models, and entry points |
 | `buddy/agent.py` | Main Pydantic AI agent factory | Registers independent behavior and response-language instructions, compaction, global memory, recall, video detail, and web search |
+| `buddy/audit.py` | Read-only UTF-8 export of application tables and logical Harness documents | Used for manual verification without PowerShell encoding conversion |
 | `buddy/prompts.py` | Central English LLM instructions, canonical-memory language rules, the overridable response-language policy, and prompt templates | Used by chat, memory, Butler, and video analyzers; exact OCR and proper names retain their source language |
 | `buddy/database.py` | SQLite connection, conversations, and raw message batches | Initializes memory-index and video-storage schemas |
 | `buddy/memory/compaction.py` | Time-window short-memory compaction and history formatting | Main agent capability and session-memory formatter |
@@ -290,6 +304,7 @@ and are deleted after generation whenever cleanup succeeds.
 | Test module | Main coverage |
 | --- | --- |
 | `tests/conftest.py` | Fresh shared SQLite `:memory:` fixture |
+| `tests/test_audit.py` | Read-only export boundaries and UTF-8 round trips |
 | `tests/test_config.py` | Model roles, tiers, and fallback selection |
 | `tests/test_timed_compaction.py` | Timed compaction, incremental summaries, and history filtering |
 | `tests/test_long_term_memory.py` | Harness store, injection-only behavior, and agent capabilities |

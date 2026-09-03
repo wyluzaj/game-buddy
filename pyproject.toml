@@ -50,6 +50,7 @@ addopts = ["--strict-markers"]
 [project.scripts]
 buddy = "buddy.main:main"
 buddy-video = "buddy.video.cli:main"
+buddy-audit = "buddy.audit:main"
 
 [tool.setuptools.packages.find]
 include = ["buddy*"]
