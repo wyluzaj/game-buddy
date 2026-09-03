@@ -343,6 +343,11 @@ Nowe fakty mogą wynikać z <user_statements> albo z <video_observations>.
 Wypowiedzi użytkownika mają pierwszeństwo. Obserwacje wideo traktuj jako
 zewnętrzne, potencjalnie niepewne dowody i zachowuj ich source URI przy celach,
 postępie oraz ważnych wydarzeniach. Nie zapisuj niepewności jako pewnego faktu.
+Samo jednorazowe zachowanie widoczne na nagraniu nie dowodzi preferencji ani
+stałego stylu użytkownika. Preferencje zapisuj wyłącznie na podstawie wyraźnej
+wypowiedzi użytkownika. Fakty z wideo umieszczaj jako postęp, wydarzenia lub
+zaobserwowane mechaniki. Nie wzmacniaj znaczenia dowodu: „wskazywał cele” nie
+oznacza „dowodził grupą”, a „użył przedmiotu” nie oznacza, że preferuje ten styl.
 Wypowiedź asystenta nie jest przekazywana do analyzera i nie może być dowodem.
 Nie przenoś informacji pomiędzy grami i nie twórz profili dla innych ścieżek.
 

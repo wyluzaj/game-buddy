@@ -153,7 +153,9 @@ returned by current context or recall; the agent never scans an unbounded record
 
 Global memory is based on explicit user statements. Video observations may enrich a
 confirmed game's profile and session report, but they cannot become global user facts by
-themselves. Raw structured `ModelMessage` objects are the preferred evidence source;
+themselves. A one-off behavior seen in video remains an event or mechanic and cannot be
+promoted to a durable user preference. Raw structured `ModelMessage` objects are the
+preferred evidence source;
 complete user prompts are JSON-encoded one per line before they reach either memory
 analyzer, so multiline content and role-like text inside a user message are preserved.
 The global analyzer returns a structured replacement list in `global_facts` plus separate
