@@ -103,11 +103,17 @@ all stored clips. There is intentionally no visual frame/embedding index in this
 so an object omitted from the detailed timeline can only be recovered by re-analyzing a
 reasonably narrowed candidate episode.
 
+Episode search first uses all supplied keywords for precision. If that produces no result,
+it retries with a bounded any-keyword query while preserving game and date filters. This
+makes retrieval tolerant of agent-added words such as a game title or `timestamp`.
+
 Timestamped source links are generated and validated by the application; the model cannot
 invent arbitrary local paths. The `analyze_video_detail` tool accepts only application-owned
 `video://segment/<id>` URIs and caches identical question/range reports. Provider observations
 outside the requested range are discarded. If none remain, the tool returns an uncertain,
-controlled answer instead of trusting invalid timestamps.
+controlled answer instead of trusting invalid timestamps. Detail prompts require absolute
+decimal seconds (`00:07` means `7.0`, never `0.07`), and the service repairs provider output
+when its textual answer proves that `mm.ss` notation was returned.
 
 Brief episode descriptions are added to the completed session report with their source
 URIs. They may update the profile of a game explicitly associated with the episode, but
@@ -125,7 +131,7 @@ python -c "import sqlite3; c=sqlite3.connect('data/chatbot.db'); print(c.execute
 Analyze a completed recording and associate it with that conversation and game:
 
 ```powershell
-python -m buddy.video.cli "C:\path\to\recording.mp4" --duration-seconds 120 --conversation-id 1 --game "Big Walk"
+python -m buddy.video.cli "C:\path\to\recording.mp4" --conversation-id 1 --game "Big Walk"
 ```
 
 `--game` is optional. When supplied, it creates or reuses that confirmed game profile and
@@ -133,6 +139,9 @@ links the episode to it. Without `--game`, a high-confidence provider result (at
 may link the episode only to an exact, already existing game profile; it never creates a new
 profile from an unconfirmed guess. Use `--memory-database` together with `--database` when
 testing against non-default database files.
+For MP4, MOV, and M4V files the CLI reads duration directly from the container. Use
+`--duration-seconds` only to override incorrect metadata or for another supported format;
+unsupported containers fall back to `VIDEO.manual_duration_seconds` (120 seconds).
 
 The next user turn receives the compact observed-game state. If the user asks for a detail
 and the state contains a source URI, the agent can call `analyze_video_detail` automatically.
@@ -361,6 +370,9 @@ the environment, regenerate `requirements-lock.txt`, and run all three commands.
   `BUDDY_DEBUG=true` for a traceback.
 - **An old clip has only an overview:** reports made before the episode-timeline migration
   remain readable, but they do not gain a searchable full timeline without re-analysis.
+- **Polish characters are broken only in redirected PowerShell logs:** the SQLite value may
+  still be correct. Before capturing another log, run `chcp 65001` and set
+  `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`.
 - **SQLite reports a lock:** close other Buddy or video-analysis processes and retry. Do not
   copy or delete either database while a process is writing it.
 - **Memory was not updated:** finish the chat cleanly, then restart Buddy. Failed jobs remain
