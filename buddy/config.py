@@ -67,6 +67,13 @@ class RuntimeSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class LanguageSettings:
+    """Language defaults for user-facing output."""
+
+    default_response_language: str = "Polish"
+
+
+@dataclass(frozen=True, slots=True)
 class StorageSettings:
     """Physical and logical storage locations."""
 
@@ -128,6 +135,7 @@ class VideoSettings:
 MODELS = ModelSettings()
 AGENT = AgentSettings()
 RUNTIME = RuntimeSettings()
+LANGUAGE = LanguageSettings()
 STORAGE = StorageSettings()
 MEMORY = MemorySettings()
 VIDEO = VideoSettings()

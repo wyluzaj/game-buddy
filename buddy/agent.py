@@ -8,11 +8,14 @@ from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.memory import Memory
 
-from buddy.config import AGENT, MODELS, build_model
+from buddy.config import AGENT, LANGUAGE, MODELS, build_model
 from buddy.memory.compaction import SummarizingCompactionTimed
 from buddy.memory.long_term import create_long_term_memory
 from buddy.memory.recall import create_recall_memory_tool
-from buddy.prompts import CHAT_AGENT_INSTRUCTIONS
+from buddy.prompts import (
+    CHAT_AGENT_INSTRUCTIONS,
+    build_response_language_instruction,
+)
 from buddy.video.detail_tool import create_analyze_video_detail_tool
 
 
@@ -32,7 +35,10 @@ def build_agent(
         tools.append(create_analyze_video_detail_tool(memory_connection))
     return Agent(
         model=model,
-        instructions=CHAT_AGENT_INSTRUCTIONS,
+        instructions=[
+            CHAT_AGENT_INSTRUCTIONS,
+            build_response_language_instruction(LANGUAGE.default_response_language),
+        ],
         capabilities=[
             ClearToolResults(
                 max_tokens=AGENT.clear_tool_results_max_tokens,

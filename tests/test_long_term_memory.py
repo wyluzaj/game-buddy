@@ -54,6 +54,17 @@ def test_agent_contains_injected_memory_capability(monkeypatch):
     assert memory in agent.root_capability.capabilities
 
 
+def test_agent_injects_behavior_and_response_language_separately(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+
+    agent = build_agent(TestModel(), memory=Memory(InMemoryStore()))
+
+    assert len(agent._instructions) == 2
+    assert "friendly buddy" in agent._instructions[0]
+    assert "configured default response language" in agent._instructions[1]
+
+
 def test_agent_uses_configured_short_term_memory_fallback(monkeypatch):
     """Short-term summarization uses its model and same-tier fallback."""
     monkeypatch.setenv("GOOGLE_API_KEY", "fake")
