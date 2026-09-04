@@ -203,6 +203,9 @@ async def _apply_long_term_memory(
 
     result = await analyzer.run(prompt)
     analysis = result.output
+    session_summary_en = analysis.session_summary_en.strip()
+    if not session_summary_en:
+        raise ValueError("Memory analyzer returned an empty English session summary.")
     games_with_user_state = [
         name.strip()
         for name in analysis.games_with_user_state
@@ -212,7 +215,7 @@ async def _apply_long_term_memory(
         return AppliedMemoryAnalysis(
             changed=False,
             games_with_user_state=games_with_user_state,
-            session_summary_en=analysis.session_summary_en.strip(),
+            session_summary_en=session_summary_en,
         )
 
     updated_memory = render_global_memory(analysis.global_facts)
@@ -222,7 +225,7 @@ async def _apply_long_term_memory(
         return AppliedMemoryAnalysis(
             changed=False,
             games_with_user_state=games_with_user_state,
-            session_summary_en=analysis.session_summary_en.strip(),
+            session_summary_en=session_summary_en,
         )
 
     await memory.store.write(
@@ -233,7 +236,7 @@ async def _apply_long_term_memory(
     return AppliedMemoryAnalysis(
         changed=True,
         games_with_user_state=games_with_user_state,
-        session_summary_en=analysis.session_summary_en.strip(),
+        session_summary_en=session_summary_en,
     )
 
 

@@ -20,6 +20,7 @@ buddy.main.main
        -> journal checkpoint: SESSION_PERSISTED
        -> memory.analysis._apply_long_term_memory
        -> analyzer returns session_summary_en even when global memory is unchanged
+       -> an empty session_summary_en fails the job and leaves it pending for retry
        -> temporary raw session report is replaced by the canonical English report
        -> journal checkpoint: GLOBAL_APPLIED + structured analyzer result
        -> memory.game.link_session_to_games
