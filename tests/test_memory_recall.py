@@ -1,5 +1,5 @@
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -7,7 +7,9 @@ from pydantic_ai import RunUsage
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
+import buddy.memory.recall as recall_module
 from buddy.config import MODEL_TIERS, MODELS
+from buddy.config import VIDEO as VIDEO_SETTINGS
 from buddy.memory.context_butler import ContextButlerResult, build_context_butler
 from buddy.memory.game import ensure_game_document, link_session_to_games
 from buddy.memory.recall import (
@@ -441,6 +443,45 @@ def test_context_butler_can_cite_an_exact_range_from_expanded_timeline(db):
 
     assert result.enough_evidence is True
     assert result.sources == [exact_source]
+
+
+def test_truncated_timeline_exposes_only_sources_present_in_content(
+    db,
+    monkeypatch,
+):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        _, game = await _add_session(
+            db,
+            memory,
+            conversation_id=1,
+            game_name="Big Walk",
+            day=20,
+            context="User: I am playing Big Walk.",
+        )
+        segment = _add_episode(
+            db,
+            conversation_id=1,
+            game_document_id=game.id,
+        )
+        monkeypatch.setattr(
+            recall_module,
+            "VIDEO",
+            replace(VIDEO_SETTINGS, recall_episode_chars=250),
+        )
+        result = await MemoryRecallService(db, memory).recall(
+            query_en="red balloon",
+            game="Big Walk",
+            memory_type=MemoryRecallType.VIDEO,
+        )
+        return result.matches[0], segment
+
+    match, segment = asyncio.run(scenario())
+
+    assert match.truncated is True
+    assert match.sources[0] == segment.source_uri
+    assert f"{segment.source_uri}?t=18-27" not in match.sources
+    assert all(source in match.content for source in match.sources[1:])
 
 
 def test_video_recall_falls_back_to_recent_episode_summary_for_known_game(db):

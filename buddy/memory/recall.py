@@ -249,13 +249,12 @@ class MemoryRecallService:
             raise RuntimeError("A searched video observation lost its segment.")
         game_title = self._game_title(segment.game_document_id)
         observations = get_episode_observations(self._conn, segment.id)
-        content = "\n\n".join(
-            self._render_video_observation(observation)
-            for observation in observations
+        content, truncated, included_sources = self._render_bounded_episode_timeline(
+            observations,
+            max_chars=VIDEO.recall_episode_chars,
         )
-        content, truncated = _bounded_text(content, VIDEO.recall_episode_chars)
         sources = [segment.source_uri]
-        sources.extend(observation.source_uri for observation in observations)
+        sources.extend(included_sources)
         return RecalledMemory(
             path=segment.source_uri,
             document_type="episode_timeline",
@@ -283,6 +282,31 @@ class MemoryRecallService:
         if observation.uncertainties:
             details.append("Uncertainties: " + ", ".join(observation.uncertainties))
         return "\n".join(details)
+
+    @classmethod
+    def _render_bounded_episode_timeline(
+        cls,
+        observations: list[StoredEpisodeObservation],
+        *,
+        max_chars: int,
+    ) -> tuple[str, bool, list[str]]:
+        """Render only complete source-backed blocks that fit the recall bound."""
+        blocks: list[str] = []
+        sources: list[str] = []
+        used_chars = 0
+        for observation in observations:
+            block = cls._render_video_observation(observation)
+            separator_chars = 2 if blocks else 0
+            if used_chars + separator_chars + len(block) > max_chars:
+                if not blocks:
+                    block, _ = _bounded_text(block, max_chars)
+                    blocks.append(block)
+                    sources.append(observation.source_uri)
+                return "\n\n".join(blocks), True, sources
+            blocks.append(block)
+            sources.append(observation.source_uri)
+            used_chars += separator_chars + len(block)
+        return "\n\n".join(blocks), False, sources
 
     @staticmethod
     def _read_episode_summary(summary: StoredEpisodeSummary) -> RecalledMemory:

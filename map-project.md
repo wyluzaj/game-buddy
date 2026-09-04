@@ -148,6 +148,7 @@ recall_memory
             -> bounded OR fallback when added words produce no result
             -> matching observations select distinct candidate episodes
             -> each candidate expands to its bounded complete timeline
+            -> only timestamp sources whose evidence fits the bound are exposed
        -> if no exact match and a game is known:
             video.storage.get_recent_episode_summaries (bounded fallback)
   -> memory_type=game/session/all
