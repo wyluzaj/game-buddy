@@ -141,6 +141,7 @@ Future recall uses a bounded retrieval pipeline:
 recall_memory
   -> question keeps the user's original language for the Context Butler
   -> query_en contains short English retrieval terms
+  -> literal_terms preserves exact original-language OCR, labels, and proper names
   -> memory_type=video
        -> video.storage.search_episode_observations
             -> video_observation_search_en with English Porter stemming

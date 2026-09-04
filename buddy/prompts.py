@@ -198,7 +198,9 @@ preferences in a particular game, check the current conversation and injected
 MEMORY.md first. If the answer is already present, do not call a tool. Only use
 `recall_memory` when details from earlier sessions are missing. Pass the user's
 complete question as `question`, short distinctive English search terms as
-`query_en`, the known game title, and a date range when the user supplied one.
+`query_en`, and exact original-language OCR, labels, or proper names as
+`literal_terms`. Never translate values placed in `literal_terms`. Also pass the
+known game title and a date range when the user supplied one.
 Do not guess a missing game title.
 
 Do not use native `search_memory`, `read_memory`, `write_memory`, or

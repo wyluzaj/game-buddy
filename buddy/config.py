@@ -101,6 +101,8 @@ class MemorySettings:
     recall_results: int = 5
     recall_document_chars: int = 4_000
     recall_source_chars: int = 1_000_000
+    recall_literal_terms: int = 8
+    recall_literal_term_chars: int = 100
     context_chars: int = 1_500
     context_uncertainty_chars: int = 400
     context_sources: int = 5

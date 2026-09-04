@@ -77,6 +77,7 @@ class MemoryRecallService:
         self,
         *,
         query_en: str | None = None,
+        literal_terms: list[str] | None = None,
         game: str | None = None,
         memory_type: MemoryRecallType = MemoryRecallType.ALL,
         date_from: str | None = None,
@@ -90,6 +91,14 @@ class MemoryRecallService:
             )
         occurred_from, occurred_before = _parse_date_range(date_from, date_to)
         normalized_query = query_en.strip() if query_en and query_en.strip() else None
+        normalized_literals = _normalize_literal_terms(literal_terms)
+        search_queries = list(
+            dict.fromkeys(
+                query
+                for query in [normalized_query, *normalized_literals]
+                if query is not None
+            )
+        )
         normalized_game = game.strip() if game and game.strip() else None
 
         game_document = None
@@ -114,17 +123,29 @@ class MemoryRecallService:
             MemoryRecallType.ALL,
             MemoryRecallType.VIDEO,
         ):
-            if normalized_query is not None:
-                observations = search_episode_observations(
-                    self._conn,
-                    query=normalized_query,
-                    game_document_id=(
-                        game_document.id if game_document is not None else None
-                    ),
-                    occurred_from=occurred_from,
-                    occurred_before=occurred_before,
-                    limit=remaining,
-                )
+            if search_queries:
+                observations: list[StoredEpisodeObservation] = []
+                seen_segments: set[int] = set()
+                for search_query in search_queries:
+                    found = search_episode_observations(
+                        self._conn,
+                        query=search_query,
+                        game_document_id=(
+                            game_document.id if game_document is not None else None
+                        ),
+                        occurred_from=occurred_from,
+                        occurred_before=occurred_before,
+                        limit=remaining,
+                    )
+                    for observation in found:
+                        if observation.segment_id in seen_segments:
+                            continue
+                        seen_segments.add(observation.segment_id)
+                        observations.append(observation)
+                        if len(observations) >= remaining:
+                            break
+                    if len(observations) >= remaining:
+                        break
                 video_matches = self._expand_candidate_episode_timelines(
                     observations,
                     limit=remaining,
@@ -140,8 +161,8 @@ class MemoryRecallService:
                 video_matches = [
                     self._read_episode_summary(summary) for summary in summaries
                 ]
-                used_recent_fallback = bool(normalized_query and summaries)
-            elif normalized_query is None:
+                used_recent_fallback = bool(search_queries and summaries)
+            elif not search_queries:
                 summaries = get_recent_episode_summaries(
                     self._conn,
                     occurred_from=occurred_from,
@@ -156,19 +177,31 @@ class MemoryRecallService:
             MemoryRecallType.ALL,
             MemoryRecallType.SESSION,
         ):
-            sessions = search_memory_documents(
-                self._conn,
-                query=normalized_query,
-                document_type=MemoryDocumentType.SESSION,
-                game_document_id=(
-                    game_document.id if game_document is not None else None
-                ),
-                occurred_from=occurred_from,
-                occurred_before=occurred_before,
-                limit=remaining,
-            )
+            sessions: list[MemoryDocument] = []
+            seen_documents: set[int] = set()
+            for search_query in search_queries or [None]:
+                found = search_memory_documents(
+                    self._conn,
+                    query=search_query,
+                    document_type=MemoryDocumentType.SESSION,
+                    game_document_id=(
+                        game_document.id if game_document is not None else None
+                    ),
+                    occurred_from=occurred_from,
+                    occurred_before=occurred_before,
+                    limit=remaining,
+                )
+                for document in found:
+                    if document.id in seen_documents:
+                        continue
+                    seen_documents.add(document.id)
+                    sessions.append(document)
+                    if len(sessions) >= remaining:
+                        break
+                if len(sessions) >= remaining:
+                    break
             if (
-                normalized_query is not None
+                search_queries
                 and not sessions
                 and game_document is not None
             ):
@@ -198,7 +231,10 @@ class MemoryRecallService:
             )
 
         memory_matches = [
-            await self._read_document(document, normalized_query)
+            await self._read_document(
+                document,
+                normalized_query or (normalized_literals[0] if normalized_literals else None),
+            )
             for document in documents
         ]
         matches = [*memory_matches, *video_matches]
@@ -409,6 +445,7 @@ class MemoryRecallCoordinator:
         *,
         question: str,
         query_en: str | None = None,
+        literal_terms: list[str] | None = None,
         game: str | None = None,
         memory_type: MemoryRecallType = MemoryRecallType.ALL,
         date_from: str | None = None,
@@ -423,6 +460,7 @@ class MemoryRecallCoordinator:
 
         recalled = await self._service.recall(
             query_en=query_en,
+            literal_terms=literal_terms,
             game=game,
             memory_type=memory_type,
             date_from=date_from,
@@ -471,6 +509,7 @@ def create_recall_memory_tool(
         ctx: RunContext,
         question: str,
         query_en: str | None = None,
+        literal_terms: list[str] | None = None,
         game: str | None = None,
         memory_type: MemoryRecallType = MemoryRecallType.ALL,
         date_from: str | None = None,
@@ -481,8 +520,10 @@ def create_recall_memory_tool(
 
         `question` is the user's complete information need in its original
         language. Translate short distinctive search terms into canonical English
-        and pass them in `query_en`. `game` should be a title explicitly known
-        from the conversation. Use `memory_type="video"` for earlier gameplay
+        and pass them in `query_en`. Put exact original-language OCR, labels, and
+        proper names in `literal_terms`; do not translate those values. `game`
+        should be a title explicitly known from the conversation. Use
+        `memory_type="video"` for earlier gameplay
         footage; exact observations are preferred and recent episode summaries
         are the bounded fallback for a known game. Dates use YYYY-MM-DD and are
         inclusive. Only compact, source-validated evidence is returned.
@@ -490,6 +531,7 @@ def create_recall_memory_tool(
         return await coordinator.recall(
             question=question,
             query_en=query_en,
+            literal_terms=literal_terms,
             game=game,
             memory_type=memory_type,
             date_from=date_from,
@@ -521,6 +563,31 @@ def _parse_date_range(
         else None
     )
     return occurred_from, occurred_before
+
+
+def _normalize_literal_terms(literal_terms: list[str] | None) -> list[str]:
+    if literal_terms is None:
+        return []
+    if len(literal_terms) > MEMORY.recall_literal_terms:
+        raise ValueError(
+            f"literal_terms accepts at most {MEMORY.recall_literal_terms} values."
+        )
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for term in literal_terms:
+        clean = " ".join(term.split()).strip()
+        if not clean:
+            continue
+        if len(clean) > MEMORY.recall_literal_term_chars:
+            raise ValueError(
+                "A literal search term cannot exceed "
+                f"{MEMORY.recall_literal_term_chars} characters."
+            )
+        key = clean.casefold()
+        if key not in seen:
+            seen.add(key)
+            normalized.append(clean)
+    return normalized
 
 
 def _parse_date(value: str, field_name: str) -> date:

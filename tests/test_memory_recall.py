@@ -130,6 +130,7 @@ def _add_episode(db, *, conversation_id: int, game_document_id: int):
                     location="Forest",
                     description="A red balloon hung on the left side of the path.",
                     visible_objects=["red balloon", "trees"],
+                    visible_text=["Magazyn"],
                 )
             ]
         ).model_dump(mode="json"),
@@ -401,6 +402,46 @@ def test_video_recall_relaxes_noisy_query_without_losing_game_filter(db):
     assert result.used_recent_fallback is False
     assert result.matches[0].path == segment.source_uri
     assert result.matches[0].document_type == "episode_timeline"
+
+
+def test_video_recall_uses_original_language_ocr_literal(db):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        _, game = await _add_session(
+            db,
+            memory,
+            conversation_id=1,
+            game_name="Big Walk",
+            day=20,
+            context="User: I am playing Big Walk.",
+        )
+        segment = _add_episode(
+            db,
+            conversation_id=1,
+            game_document_id=game.id,
+        )
+        result = await MemoryRecallService(db, memory).recall(
+            query_en="warehouse",
+            literal_terms=["Magazyn"],
+            game="Big Walk",
+            memory_type=MemoryRecallType.VIDEO,
+        )
+        return result, segment
+
+    result, segment = asyncio.run(scenario())
+
+    assert result.used_recent_fallback is False
+    assert result.matches[0].path == segment.source_uri
+    assert "Visible text: Magazyn" in result.matches[0].content
+
+
+def test_recall_rejects_too_many_literal_terms(db):
+    with pytest.raises(ValueError, match="at most"):
+        asyncio.run(
+            MemoryRecallService(db, Memory(InMemoryStore())).recall(
+                literal_terms=[f"term-{index}" for index in range(9)],
+            )
+        )
 
 
 def test_context_butler_can_cite_an_exact_range_from_expanded_timeline(db):
