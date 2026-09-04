@@ -123,10 +123,7 @@ class MemoryRecallService:
                     ),
                     occurred_from=occurred_from,
                     occurred_before=occurred_before,
-                    limit=min(
-                        MEMORY.search_results,
-                        remaining * VIDEO.recall_candidate_multiplier,
-                    ),
+                    limit=remaining,
                 )
                 video_matches = self._expand_candidate_episode_timelines(
                     observations,

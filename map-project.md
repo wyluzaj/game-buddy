@@ -146,7 +146,7 @@ recall_memory
             -> video_observation_search_en with English Porter stemming
             -> precise FTS5 AND query
             -> bounded OR fallback when added words produce no result
-            -> matching observations select distinct candidate episodes
+            -> SQL ranking selects one best observation per distinct candidate episode
             -> each candidate expands to its bounded complete timeline
             -> only timestamp sources whose evidence fits the bound are exposed
        -> if no exact match and a game is known:

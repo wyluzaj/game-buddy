@@ -118,7 +118,6 @@ class VideoSettings:
     context_chars: int = 1_000
     context_sources: int = 5
     context_uncertainty_chars: int = 400
-    recall_candidate_multiplier: int = 4
     recall_episode_chars: int = 20_000
     session_observations: int = 50
     session_observation_chars: int = 30_000

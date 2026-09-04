@@ -273,6 +273,61 @@ def test_english_video_index_matches_inflected_word_forms(db):
     assert [match.segment_id for match in matches] == [segment.id]
 
 
+def test_episode_search_limit_counts_distinct_segments(db):
+    first_segment = _recorded_segment(db)
+    second_started_at = datetime(2026, 8, 29, 19, 0, tzinfo=timezone.utc)
+    second_segment = create_video_segment(
+        db,
+        conversation_id=create_conversation(db),
+        file_path="data/videos/2026-08-29/segment-2.mp4",
+        started_at=second_started_at,
+        ended_at=second_started_at + timedelta(minutes=2),
+    )
+    episodes = (
+        (
+            first_segment,
+            [
+                EpisodeObservation(
+                    start_seconds=index * 5,
+                    end_seconds=index * 5 + 4,
+                    activity=f"Inspecting red balloon number {index}.",
+                    description=f"A red balloon appears in area {index}.",
+                )
+                for index in range(8)
+            ],
+        ),
+        (
+            second_segment,
+            [
+                EpisodeObservation(
+                    start_seconds=10,
+                    end_seconds=15,
+                    activity="Following another red balloon.",
+                    description="A red balloon appears beside a tower.",
+                )
+            ],
+        ),
+    )
+    for segment, observations in episodes:
+        assert claim_video_segment_for_analysis(db, segment.id) is not None
+        save_video_report(
+            db,
+            segment_id=segment.id,
+            mode=VideoReportMode.EPISODE,
+            provider="stub",
+            model_name="stub",
+            content=EpisodeAnalysis(observations=observations).model_dump(mode="json"),
+        )
+
+    matches = search_episode_observations(db, query="red balloon", limit=2)
+
+    assert {match.segment_id for match in matches} == {
+        first_segment.id,
+        second_segment.id,
+    }
+    assert len(matches) == 2
+
+
 def test_episode_search_can_be_limited_to_a_confirmed_game(db):
     first_game = index_memory_document(
         db,
