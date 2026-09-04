@@ -1,4 +1,5 @@
 import asyncio
+from hashlib import sha256
 
 from pydantic_ai_harness.memory import Memory
 
@@ -25,6 +26,8 @@ def test_audit_export_preserves_unicode_as_utf8(tmp_path):
         )
 
     asyncio.run(write_memory())
+    chat_hash_before = sha256(chat_database.read_bytes()).digest()
+    memory_hash_before = sha256(memory_database.read_bytes()).digest()
 
     chat_output, memory_output = export_audit(
         database_path=chat_database,
@@ -37,6 +40,8 @@ def test_audit_export_preserves_unicode_as_utf8(tmp_path):
     assert memory_output.read_bytes().decode("utf-8").startswith(
         "=== main/MEMORY.md ==="
     )
+    assert sha256(chat_database.read_bytes()).digest() == chat_hash_before
+    assert sha256(memory_database.read_bytes()).digest() == memory_hash_before
 
 
 def test_audit_export_requires_existing_databases(tmp_path):

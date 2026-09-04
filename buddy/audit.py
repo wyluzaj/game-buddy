@@ -4,6 +4,7 @@ import argparse
 import json
 import sqlite3
 from pathlib import Path
+from typing import TextIO
 
 from buddy.config import STORAGE
 
@@ -75,20 +76,22 @@ def export_audit(
 
     chat_output = destination / "chat-database-audit.txt"
     memory_output = destination / "memory-documents-audit.txt"
-    chat_output.write_text(
-        _render_chat_database(chat_source),
-        encoding="utf-8",
-        newline="\n",
-    )
-    memory_output.write_text(
-        _render_memory_documents(memory_source),
-        encoding="utf-8",
-        newline="\n",
-    )
+    chat_temporary = destination / ".chat-database-audit.tmp"
+    memory_temporary = destination / ".memory-documents-audit.tmp"
+    try:
+        with chat_temporary.open("w", encoding="utf-8", newline="\n") as stream:
+            _write_chat_database(chat_source, stream)
+        with memory_temporary.open("w", encoding="utf-8", newline="\n") as stream:
+            _write_memory_documents(memory_source, stream)
+        chat_temporary.replace(chat_output)
+        memory_temporary.replace(memory_output)
+    finally:
+        chat_temporary.unlink(missing_ok=True)
+        memory_temporary.unlink(missing_ok=True)
     return chat_output, memory_output
 
 
-def _render_chat_database(database_path: Path) -> str:
+def _write_chat_database(database_path: Path, stream: TextIO) -> None:
     connection = sqlite3.connect(_read_only_uri(database_path), uri=True)
     connection.row_factory = sqlite3.Row
     try:
@@ -98,22 +101,28 @@ def _render_chat_database(database_path: Path) -> str:
                 "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
             )
         }
-        sections = []
+        first_section = True
         for table in CHAT_AUDIT_TABLES:
             if table not in available:
                 continue
-            rows = connection.execute(f'SELECT * FROM "{table}"').fetchall()
-            payload = "\n".join(
-                json.dumps(dict(row), ensure_ascii=False, default=str)
-                for row in rows
-            ) or "(empty)"
-            sections.append(f"=== {table} ===\n{payload}")
-        return "\n\n".join(sections) + "\n"
+            if not first_section:
+                stream.write("\n")
+            first_section = False
+            stream.write(f"=== {table} ===\n")
+            cursor = connection.execute(f'SELECT * FROM "{table}"')
+            wrote_row = False
+            for row in cursor:
+                wrote_row = True
+                stream.write(
+                    json.dumps(dict(row), ensure_ascii=False, default=str) + "\n"
+                )
+            if not wrote_row:
+                stream.write("(empty)\n")
     finally:
         connection.close()
 
 
-def _render_memory_documents(database_path: Path) -> str:
+def _write_memory_documents(database_path: Path, stream: TextIO) -> None:
     connection = sqlite3.connect(_read_only_uri(database_path), uri=True)
     connection.row_factory = sqlite3.Row
     try:
@@ -128,12 +137,15 @@ def _render_memory_documents(database_path: Path) -> str:
             WHERE path = 'main' OR path LIKE 'main/%'
             ORDER BY path
             """
-        ).fetchall()
-        sections = [
-            f"=== {row['path']} ===\n{row['content']}"
-            for row in rows
-        ]
-        return ("\n\n".join(sections) or "(no memory documents)") + "\n"
+        )
+        wrote_document = False
+        for row in rows:
+            if wrote_document:
+                stream.write("\n")
+            wrote_document = True
+            stream.write(f"=== {row['path']} ===\n{row['content']}\n")
+        if not wrote_document:
+            stream.write("(no memory documents)\n")
     finally:
         connection.close()
 

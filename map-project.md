@@ -188,13 +188,14 @@ turns global facts into Markdown. This removes substring-based deletion of model
 ```text
 python -m buddy.audit
   -> opens data/chatbot.db in SQLite read-only mode
-  -> renders application tables as Unicode JSON lines
+  -> streams application tables as Unicode JSON lines
   -> lists and reads logical main/* documents from data/memory.db
-  -> writes both audit files directly with Python encoding="utf-8"
+  -> atomically replaces both audit files written with Python encoding="utf-8"
 ```
 
 This avoids depending on the active PowerShell code page and never migrates or mutates the
-chat database during inspection.
+databases during inspection. Audit outputs and runtime logs are ignored by Git because they
+may contain private conversations, memory, and local recording paths.
 
 ### `data/chatbot.db`
 
