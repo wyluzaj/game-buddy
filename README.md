@@ -83,7 +83,8 @@ For historical retrieval, `recall_memory` keeps the complete `question` in the u
 language and receives short translated English terms in `query_en`. Exact OCR, labels, and
 proper names remain unmodified in the separate bounded `literal_terms` argument. For
 example, a Polish question may search with `query_en="warehouse"` and
-`literal_terms=["Magazyn"]`. Canonical memory and video FTS5 indexes use the English Porter
+`literal_terms=["Magazyn"]`. This argument is always a JSON array, even for one value, and
+its generated tool schema rejects comma-separated strings. Canonical memory and video FTS5 indexes use the English Porter
 stemmer, so related forms such as `star` and `stars` match. Schema version 6 creates these
 indexes and backfills them from the retained legacy indexes without deleting existing data.
 
@@ -100,7 +101,7 @@ third, on-demand mode:
    Butler maintains a short current-state snapshot for the next chat turn.
 3. **Detail re-analysis** is invoked only when stored observations do not answer a concrete
    visual or audible question and one `video://segment/...` candidate is available. It
-   re-reads only that segment or timestamp range and caches the question-specific answer.
+   re-reads that complete short episode and caches the question-specific answer.
 
 The episode flow is:
 
@@ -120,7 +121,10 @@ concrete locations, outcomes, discoveries, notable objects or screen text, progr
 unresolved problems when supported by the timeline. The Butler keeps a single replacement
 state instead of appending every clip; it prioritizes at most six concrete facts and is
 bounded to 1,000 characters. Brevity comes from removing repetition and low-value detail,
-not from replacing evidence with vague statements such as "the player explored." Ordinary
+not from replacing evidence with vague statements such as "the player explored." Explicit
+episode uncertainties constrain the brief, so an uncertain purpose or outcome cannot become
+a confirmed fact. Recording titles, player UI, watermarks, and unrelated overlays remain in
+the searchable timeline but are omitted from the brief and current state. Ordinary
 movement still belongs in the timeline when it identifies a route, landmark, or location,
 but duplicate or irrelevant movement need not change current chat context.
 
@@ -135,7 +139,9 @@ recent brief episode descriptions. The main agent may request detail analysis on
 stored evidence is insufficient and only for one concrete source. It does not ask Gemini to
 scan an arbitrary two-hour recording or all stored clips. There is intentionally no visual
 frame/embedding index in this version, so an object omitted from the detailed timeline can
-only be recovered by re-analyzing a reasonably narrowed candidate episode.
+only be recovered by re-analyzing one candidate episode. Episodes are currently expected to
+be short; a timestamped source selects its segment, but detail analysis searches that complete
+segment to avoid missing an unindexed fact elsewhere in the same recording.
 
 Episode search first uses all supplied keywords for precision. If that produces no result,
 it retries with a bounded any-keyword query while preserving game and date filters. This
@@ -143,9 +149,10 @@ makes retrieval tolerant of agent-added words such as a game title or `timestamp
 
 Timestamped source links are generated and validated by the application; the model cannot
 invent arbitrary local paths. The `analyze_video_detail` tool accepts only application-owned
-`video://segment/<id>` URIs and caches identical question/range reports. Provider observations
-outside the requested range are discarded. If none remain, the tool returns an uncertain,
-controlled answer instead of trusting invalid timestamps. Detail prompts require absolute
+`video://segment/<id>` URIs and caches identical question/episode reports. Timestamp hints are
+normalized to the complete stored episode before the cache key and Gemini request are built.
+Provider observations outside the episode duration are discarded. If none remain, the tool
+returns an uncertain, controlled answer instead of trusting invalid timestamps. Detail prompts require absolute
 decimal seconds (`00:07` means `7.0`, never `0.07`), and the service repairs provider output
 when its textual answer proves that `mm.ss` notation was returned.
 
