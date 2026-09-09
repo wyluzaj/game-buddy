@@ -53,6 +53,10 @@ def test_video_context_prompt_requires_brief_but_concrete_output():
     assert "Do not omit an important fact" in instructions
     assert "present location" in instructions
     assert "Use specific nouns and outcomes" in instructions
+    assert "Omit recording titles" in instructions
+    assert "remains available in the detailed timeline" in instructions
+    assert "Treat the supplied `uncertainties` as constraints" in instructions
+    assert "Never state an uncertain purpose" in instructions
 
 
 def _episode_report(

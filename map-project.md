@@ -72,6 +72,7 @@ buddy.video.cli
             -> video.context_butler.build_video_context_prompt
             -> Video Context Butler Agent
             -> persist a concise, information-dense episode summary for historical recall
+                 -> omit non-gameplay overlays and preserve episode uncertainties
             -> build a concrete current-state snapshot from up to six prioritized facts
             -> decide whether current gameplay state changed
             -> source validation
@@ -298,7 +299,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/video/metadata.py` | Dependency-free MP4/MOV duration reader | Used by the manual CLI before segment registration |
 | `buddy/video/storage.py` | Versioned video schema, validated report/observation persistence, canonical English Porter FTS5 episode search, legacy-index migration, game links, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
 | `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, episode timeline sanitization, retry, legacy-overview reuse, conservative game linking, and persistence | Connects `VideoAnalyzer` to `video.storage` without losing an otherwise valid episode |
-| `buddy/video/context_butler.py` | Episode-summary and replacement-state prompt construction plus source validation | Used by `video.context_service.py` |
+| `buddy/video/context_butler.py` | Episode-summary and replacement-state prompt construction plus source validation | Used by `video.context_service.py`; brief output omits non-gameplay overlays and cannot promote explicit episode uncertainty to fact |
 | `buddy/video/context_service.py` | Idempotent episode-to-summary/current-context reduction, including late-report handling | Connects storage to Video Context Butler |
 | `buddy/video/pipeline.py` | End-to-end episode and context-update orchestration | Used by the manual CLI and future capture worker |
 | `buddy/video/context_injection.py` | Replaces prior gameplay state in chat history | Used by the terminal loop |
