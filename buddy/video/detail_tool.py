@@ -26,8 +26,10 @@ def create_analyze_video_detail_tool(
         """Inspect a stored gameplay clip more closely.
 
         Use a `video://segment/...` source already present in the observed
-        gameplay context. `question` must state exactly what visual detail the
-        user needs. Never invent or modify a segment ID.
+        gameplay context. A timestamped source selects its complete short
+        episode; detailed analysis currently checks the whole episode.
+        `question` must state exactly what visual detail the user needs. Never
+        invent or modify a segment ID.
         """
         del ctx
         async with GeminiVideoAnalyzer(model=MODELS.video_detail) as analyzer:

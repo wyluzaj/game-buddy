@@ -100,7 +100,8 @@ user asks about a visible or audible detail
   -> main agent finds a video://segment/... source in context
   -> analyze_video_detail tool
        -> video.detail_service.parse_video_source
-       -> validate segment ownership and timestamp range
+       -> validate the internal segment and any timestamp hint
+       -> expand the hint to the complete short episode
        -> build a canonical request key and acquire its in-process lock
        -> reuse an identical indexed detail report when available
        -> GeminiVideoAnalyzer.analyze_detail
@@ -112,7 +113,9 @@ user asks about a visible or audible detail
 ```
 
 The tool never accepts an arbitrary filesystem path from the model. It resolves only
-application-owned `video://segment/<id>` identifiers through SQLite.
+application-owned `video://segment/<id>` identifiers through SQLite. In the current MVP,
+a timestamped source selects a candidate but detailed Gemini analysis covers that complete
+short episode so an omitted detail elsewhere in the same recording is not missed.
 Invalid provider observations are removed before persistence, so the request cache never
 turns an out-of-range timestamp into trusted evidence.
 

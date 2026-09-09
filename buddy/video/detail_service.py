@@ -113,7 +113,7 @@ def parse_video_source(
     conn: sqlite3.Connection,
     source_uri: str,
 ) -> ParsedVideoSource:
-    """Accept only internal segment URIs and ranges within the stored duration."""
+    """Resolve an internal URI to the complete short episode it identifies."""
     match = _VIDEO_SOURCE_PATTERN.fullmatch(source_uri.strip())
     if match is None:
         raise ValueError(
@@ -124,20 +124,21 @@ def parse_video_source(
     segment = get_video_segment(conn, segment_id)
     if segment is None:
         raise ValueError(f"Unknown video segment: {segment_id}.")
-    start = float(match.group("start") or 0)
-    end = float(match.group("end") or segment.duration_seconds)
-    if end < start:
+    requested_start = float(match.group("start") or 0)
+    requested_end = float(match.group("end") or segment.duration_seconds)
+    if requested_end < requested_start:
         raise ValueError("The video source range cannot end before it starts.")
-    if end > segment.duration_seconds + 0.001:
+    if requested_end > segment.duration_seconds + 0.001:
         raise ValueError("The video source range exceeds the segment duration.")
-    canonical = segment.source_uri
-    if match.group("start") is not None:
-        canonical += f"?t={_format_seconds(start)}-{_format_seconds(end)}"
+    # Recall returns timestamped evidence. For the current short-episode MVP,
+    # that range selects the candidate episode but does not constrain Gemini.
+    # Searching the complete episode avoids missing an unindexed detail that
+    # appeared elsewhere in the same recording.
     return ParsedVideoSource(
         segment_id=segment_id,
-        start_seconds=start,
-        end_seconds=end,
-        canonical_uri=canonical,
+        start_seconds=0.0,
+        end_seconds=segment.duration_seconds,
+        canonical_uri=segment.source_uri,
     )
 
 
@@ -154,7 +155,7 @@ def _sanitize_and_build_sources(
     analysis: VideoDetailAnalysis,
     requested: ParsedVideoSource,
 ) -> tuple[VideoDetailAnalysis, list[str]]:
-    """Drop provider evidence outside the requested clip without expanding it."""
+    """Drop provider evidence outside the selected complete episode."""
     sources: list[str] = []
     valid_observations = []
     dropped_count = 0
@@ -175,17 +176,17 @@ def _sanitize_and_build_sources(
     if dropped_count == 0:
         return analysis, list(dict.fromkeys(sources)) or [requested.canonical_uri]
 
-    range_label = (
+    episode_label = (
         f"{_format_seconds(requested.start_seconds)}-"
         f"{_format_seconds(requested.end_seconds)}s"
     )
     uncertainty = (
-        f"Dropped {dropped_count} observation(s) outside the requested range "
-        f"{range_label}."
+        f"Dropped {dropped_count} observation(s) outside the episode "
+        f"{episode_label}."
     )
     answer = analysis.answer
     if not valid_observations:
-        answer = "The answer could not be confirmed in the requested video range."
+        answer = "The answer could not be confirmed in the selected video episode."
     sanitized = analysis.model_copy(
         update={
             "answer": answer,
