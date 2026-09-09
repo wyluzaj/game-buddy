@@ -71,7 +71,8 @@ buddy.video.cli
        -> video.context_service.process_video_report_context
             -> video.context_butler.build_video_context_prompt
             -> Video Context Butler Agent
-            -> persist an episode summary for historical recall
+            -> persist a concise, information-dense episode summary for historical recall
+            -> build a concrete current-state snapshot from up to six prioritized facts
             -> decide whether current gameplay state changed
             -> source validation
             -> video.storage.save_video_context_update
@@ -276,7 +277,7 @@ and are deleted after generation whenever cleanup succeeds.
 | `buddy/config.py` | Central immutable sections for models, runtime diagnostics, response language, agent, storage, memory, video, and MIME types | Used by all factories, services, models, and entry points |
 | `buddy/agent.py` | Main Pydantic AI agent factory | Registers independent behavior and response-language instructions, compaction, global memory, recall, video detail, and web search |
 | `buddy/audit.py` | Read-only UTF-8 export of application tables and logical Harness documents | Used for manual verification without PowerShell encoding conversion |
-| `buddy/prompts.py` | Central English LLM instructions, canonical-memory language rules, the overridable response-language policy, and prompt templates | Used by chat, memory, Butler, and video analyzers; exact OCR and proper names retain their source language |
+| `buddy/prompts.py` | Central English LLM instructions, canonical-memory language rules, the overridable response-language policy, and prompt templates | Used by chat, memory, Butler, and video analyzers; Video Butler favors concrete, information-dense summaries while exact OCR and proper names retain their source language |
 | `buddy/database.py` | SQLite connection, conversations, and raw message batches | Initializes memory-index and video-storage schemas |
 | `buddy/memory/compaction.py` | Time-window short-memory compaction and history formatting | Main agent capability and session-memory formatter |
 | `buddy/memory/long_term.py` | Injection-only Harness Memory backed by SQLite | Used by chat, recall, and post-session analyzers |

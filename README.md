@@ -115,8 +115,12 @@ local clip
 ```
 
 The full timeline and brief description remain durable even when the current-state decision
-is `changed=false`. The Butler keeps a single replacement state instead of appending every
-clip; it includes at most six important facts and is bounded to 1,000 characters. Ordinary
+is `changed=false`. Brief descriptions are concise but information-dense: they preserve
+concrete locations, outcomes, discoveries, notable objects or screen text, progress, and
+unresolved problems when supported by the timeline. The Butler keeps a single replacement
+state instead of appending every clip; it prioritizes at most six concrete facts and is
+bounded to 1,000 characters. Brevity comes from removing repetition and low-value detail,
+not from replacing evidence with vague statements such as "the player explored." Ordinary
 movement still belongs in the timeline when it identifies a route, landmark, or location,
 but duplicate or irrelevant movement need not change current chat context.
 

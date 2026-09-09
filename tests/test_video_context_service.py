@@ -7,6 +7,7 @@ from pydantic_ai.models.fallback import FallbackModel
 
 from buddy.config import MODEL_TIERS, MODELS
 from buddy.database import create_conversation
+from buddy.prompts import VIDEO_CONTEXT_BUTLER_INSTRUCTIONS
 from buddy.video.context_butler import (
     VideoContextButlerResult,
     build_video_context_butler,
@@ -41,6 +42,17 @@ class StubVideoContextButler:
         self.prompts.append(prompt)
         self.usages.append(usage)
         return StubVideoContextRunResult(self.outputs.pop(0))
+
+
+def test_video_context_prompt_requires_brief_but_concrete_output():
+    instructions = " ".join(VIDEO_CONTEXT_BUTLER_INSTRUCTIONS.split())
+
+    assert "concise but information-dense" in instructions
+    assert "what was found, where it was, and what changed" in instructions
+    assert '"the player explored"' in instructions
+    assert "Do not omit an important fact" in instructions
+    assert "present location" in instructions
+    assert "Use specific nouns and outcomes" in instructions
 
 
 def _episode_report(
