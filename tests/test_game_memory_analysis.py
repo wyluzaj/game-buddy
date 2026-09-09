@@ -108,6 +108,7 @@ def test_distinct_game_titles_do_not_share_a_colliding_slug(db):
 
 
 def test_game_memory_instructions_do_not_promote_video_behavior_to_preference():
-    assert "nie dowodzi preferencji" in GAME_MEMORY_ANALYZER_INSTRUCTIONS
-    assert "Preferencje zapisuj wyłącznie" in GAME_MEMORY_ANALYZER_INSTRUCTIONS
-    assert "Nie wzmacniaj znaczenia dowodu" in GAME_MEMORY_ANALYZER_INSTRUCTIONS
+    assert "prove a preference" in GAME_MEMORY_ANALYZER_INSTRUCTIONS
+    assert "preferences only from explicit" in GAME_MEMORY_ANALYZER_INSTRUCTIONS
+    assert "Do not exaggerate evidence" in GAME_MEMORY_ANALYZER_INSTRUCTIONS
+    assert "generated content in English" in GAME_MEMORY_ANALYZER_INSTRUCTIONS

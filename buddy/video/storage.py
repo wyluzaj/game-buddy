@@ -136,10 +136,48 @@ def init_video_storage(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE VIRTUAL TABLE IF NOT EXISTS video_observation_search_en USING fts5(
+            observation_id UNINDEXED,
+            activity,
+            location,
+            description,
+            visible_objects,
+            visible_text,
+            tokenize = 'porter unicode61 remove_diacritics 2'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO video_observation_search_en (
+            observation_id, activity, location, description,
+            visible_objects, visible_text
+        )
+        SELECT legacy.observation_id, legacy.activity, legacy.location,
+               legacy.description, legacy.visible_objects, legacy.visible_text
+        FROM video_observation_search AS legacy
+        WHERE NOT EXISTS (
+            SELECT 1 FROM video_observation_search_en AS canonical
+            WHERE canonical.observation_id = legacy.observation_id
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TRIGGER IF NOT EXISTS video_observations_after_delete
         AFTER DELETE ON video_observations
         BEGIN
             DELETE FROM video_observation_search
+            WHERE observation_id = OLD.id;
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS video_observations_after_delete_en
+        AFTER DELETE ON video_observations
+        BEGIN
+            DELETE FROM video_observation_search_en
             WHERE observation_id = OLD.id;
         END
         """
@@ -594,7 +632,7 @@ def search_episode_observations(
     occurred_before: datetime | None = None,
     limit: int = 5,
 ) -> list[StoredEpisodeObservation]:
-    """Search bounded episode evidence by text plus session/game/date filters."""
+    """Return the best matching observation from each distinct episode."""
     exact_query, fallback_query = _build_fts_queries(query)
     if not 1 <= limit <= 100:
         raise ValueError("Video observation search limit must be between 1 and 100.")
@@ -617,43 +655,60 @@ def search_episode_observations(
     where_filters = "".join(f" AND {item}" for item in filters)
     parameters.append(limit)
 
-    rows = conn.execute(
-        f"""
-        SELECT observations.*
-        FROM video_observation_search AS search
-        JOIN video_observations AS observations
-          ON observations.id = search.observation_id
-        JOIN video_segments AS segments
-          ON segments.id = observations.segment_id
-        WHERE video_observation_search MATCH ?
-          {where_filters}
-        ORDER BY bm25(video_observation_search),
-                 segments.started_at DESC,
-                 observations.start_seconds
-        LIMIT ?
-        """,
-        parameters,
-    ).fetchall()
+    rows = _search_distinct_episode_observations(
+        conn,
+        fts_query=exact_query,
+        where_filters=where_filters,
+        parameters=parameters,
+    )
     if not rows and fallback_query is not None:
-        parameters[0] = fallback_query
-        rows = conn.execute(
-            f"""
-            SELECT observations.*
-            FROM video_observation_search AS search
+        rows = _search_distinct_episode_observations(
+            conn,
+            fts_query=fallback_query,
+            where_filters=where_filters,
+            parameters=parameters,
+        )
+    return [_episode_observation_from_row(row) for row in rows]
+
+
+def _search_distinct_episode_observations(
+    conn: sqlite3.Connection,
+    *,
+    fts_query: str,
+    where_filters: str,
+    parameters: list[object],
+) -> list[sqlite3.Row]:
+    """Rank observations first, then keep one best hit per video segment."""
+    query_parameters = [fts_query, *parameters[1:]]
+    return conn.execute(
+        f"""
+        WITH matches AS MATERIALIZED (
+            SELECT observations.*,
+                   segments.started_at AS segment_started_at,
+                   bm25(video_observation_search_en) AS relevance
+            FROM video_observation_search_en AS search
             JOIN video_observations AS observations
               ON observations.id = search.observation_id
             JOIN video_segments AS segments
               ON segments.id = observations.segment_id
-            WHERE video_observation_search MATCH ?
+            WHERE video_observation_search_en MATCH ?
               {where_filters}
-            ORDER BY bm25(video_observation_search),
-                     segments.started_at DESC,
-                     observations.start_seconds
-            LIMIT ?
-            """,
-            parameters,
-        ).fetchall()
-    return [_episode_observation_from_row(row) for row in rows]
+        ),
+        ranked AS (
+            SELECT matches.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY segment_id
+                       ORDER BY relevance, start_seconds, id
+                   ) AS episode_rank
+            FROM matches
+        )
+        SELECT * FROM ranked
+        WHERE episode_rank = 1
+        ORDER BY relevance, segment_started_at DESC, start_seconds, id
+        LIMIT ?
+        """,
+        query_parameters,
+    ).fetchall()
 
 
 def get_recent_episode_summaries(
@@ -958,6 +1013,27 @@ def _save_episode_observations(
         conn.execute(
             """
             INSERT INTO video_observation_search (
+                observation_id,
+                activity,
+                location,
+                description,
+                visible_objects,
+                visible_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                observation_id,
+                observation.activity,
+                observation.location or "",
+                observation.description,
+                "\n".join(observation.visible_objects),
+                "\n".join(observation.visible_text),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO video_observation_search_en (
                 observation_id,
                 activity,
                 location,

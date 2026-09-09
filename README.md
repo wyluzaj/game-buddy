@@ -14,6 +14,8 @@ Pydantic Logfire.
 - Automatic consolidation of completed sessions into long-term memory.
 - Searchable session reports and game-specific memory profiles.
 - Source-aware memory recall reduced by a dedicated Context Butler.
+- English canonical memory and Porter-stemmed search with multilingual chat input.
+- Independently configurable response language that explicit user requests override.
 - Detailed Gemini episode timelines and on-demand re-analysis of one selected clip.
 - Searchable timestamped episode observations and durable brief descriptions.
 - Bounded Video Context Butler state injected into the correct chat session.
@@ -57,10 +59,34 @@ current chat
 
 The long-term analyzer treats user statements as the source of facts. Assistant-only claims,
 greetings, temporary details, and empty sessions are not promoted to durable memory. A failed
-session remains pending so it can be retried without blocking later sessions.
+session remains pending so it can be retried without blocking later sessions. Every analyzed
+non-empty session must include a non-empty English session summary; omission fails the job
+instead of silently accepting a non-canonical report.
 
 The raw database
 is retained for persistence and as a fallback source for memory analysis.
+
+### Language model
+
+Internal prompts and model-generated memory use English as the canonical language.
+`MEMORY.md`, finalized session reports, game profiles, episode timelines, episode summaries,
+and Butler context are therefore generated in English. Raw user/assistant messages remain
+unchanged in `data/chatbot.db`; exact OCR and proper names also retain their original
+spelling.
+
+The response language is independent. `LANGUAGE.default_response_language` defaults to
+`Polish`, but the user's latest explicit request in the current conversation takes priority
+and remains active until changed again. For example, after “speak English” the agent replies
+in English even though its internal memory policy does not change.
+
+For historical retrieval, `recall_memory` keeps the complete `question` in the user's
+language and receives short translated English terms in `query_en`. Exact OCR, labels, and
+proper names remain unmodified in the separate bounded `literal_terms` argument. For
+example, a Polish question may search with `query_en="warehouse"` and
+`literal_terms=["Magazyn"]`. This argument is always a JSON array, even for one value, and
+its generated tool schema rejects comma-separated strings. Canonical memory and video FTS5 indexes use the English Porter
+stemmer, so related forms such as `star` and `stars` match. Schema version 6 creates these
+indexes and backfills them from the retained legacy indexes without deleting existing data.
 
 ## Gameplay video analysis
 
@@ -75,7 +101,7 @@ third, on-demand mode:
    Butler maintains a short current-state snapshot for the next chat turn.
 3. **Detail re-analysis** is invoked only when stored observations do not answer a concrete
    visual or audible question and one `video://segment/...` candidate is available. It
-   re-reads only that segment or timestamp range and caches the question-specific answer.
+   re-reads that complete short episode and caches the question-specific answer.
 
 The episode flow is:
 
@@ -90,18 +116,32 @@ local clip
 ```
 
 The full timeline and brief description remain durable even when the current-state decision
-is `changed=false`. The Butler keeps a single replacement state instead of appending every
-clip; it includes at most six important facts and is bounded to 1,000 characters. Ordinary
+is `changed=false`. Brief descriptions are concise but information-dense: they preserve
+concrete locations, outcomes, discoveries, notable objects or screen text, progress, and
+unresolved problems when supported by the timeline. The Butler keeps a single replacement
+state instead of appending every clip; it prioritizes at most six concrete facts and is
+bounded to 1,000 characters. Brevity comes from removing repetition and low-value detail,
+not from replacing evidence with vague statements such as "the player explored." Explicit
+episode uncertainties constrain the brief, so an uncertain purpose or outcome cannot become
+a confirmed fact. Recording titles, player UI, watermarks, and unrelated overlays remain in
+the searchable timeline but are omitted from the brief and current state. Ordinary
 movement still belongs in the timeline when it identifies a route, landmark, or location,
 but duplicate or irrelevant movement need not change current chat context.
 
 For questions about older gameplay, `recall_memory(memory_type="video")` searches timestamped
-observations first. If there is no exact text match and a game is known, it returns a bounded
-set of recent brief episode descriptions. The main agent may then request detail analysis
-for one concrete source. It does not ask Gemini to scan an arbitrary two-hour recording or
-all stored clips. There is intentionally no visual frame/embedding index in this version,
-so an object omitted from the detailed timeline can only be recovered by re-analyzing a
-reasonably narrowed candidate episode.
+observations first. SQL ranking keeps the best match from each distinct episode, preventing
+many observations from one recording from consuming the entire result limit. A matching
+observation selects a candidate episode; recall then returns
+that episode's complete stored timeline up to the configured bound, including exact
+timestamp sources for only the observation blocks actually included before truncation. If
+no text match exists and a game is known, it returns a bounded set of
+recent brief episode descriptions. The main agent may request detail analysis only after
+stored evidence is insufficient and only for one concrete source. It does not ask Gemini to
+scan an arbitrary two-hour recording or all stored clips. There is intentionally no visual
+frame/embedding index in this version, so an object omitted from the detailed timeline can
+only be recovered by re-analyzing one candidate episode. Episodes are currently expected to
+be short; a timestamped source selects its segment, but detail analysis searches that complete
+segment to avoid missing an unindexed fact elsewhere in the same recording.
 
 Episode search first uses all supplied keywords for precision. If that produces no result,
 it retries with a bounded any-keyword query while preserving game and date filters. This
@@ -109,9 +149,10 @@ makes retrieval tolerant of agent-added words such as a game title or `timestamp
 
 Timestamped source links are generated and validated by the application; the model cannot
 invent arbitrary local paths. The `analyze_video_detail` tool accepts only application-owned
-`video://segment/<id>` URIs and caches identical question/range reports. Provider observations
-outside the requested range are discarded. If none remain, the tool returns an uncertain,
-controlled answer instead of trusting invalid timestamps. Detail prompts require absolute
+`video://segment/<id>` URIs and caches identical question/episode reports. Timestamp hints are
+normalized to the complete stored episode before the cache key and Gemini request are built.
+Provider observations outside the episode duration are discarded. If none remain, the tool
+returns an uncertain, controlled answer instead of trusting invalid timestamps. Detail prompts require absolute
 decimal seconds (`00:07` means `7.0`, never `0.07`), and the service repairs provider output
 when its textual answer proves that `mm.ss` notation was returned.
 
@@ -145,6 +186,22 @@ unsupported containers fall back to `VIDEO.manual_duration_seconds` (120 seconds
 
 The next user turn receives the compact observed-game state. If the user asks for a detail
 and the state contains a source URI, the agent can call `analyze_video_detail` automatically.
+
+### UTF-8 audit export
+
+Use the application exporter instead of PowerShell output redirection when inspecting
+Unicode data:
+
+```powershell
+python -m buddy.audit --output-directory audit
+```
+
+The equivalent installed command is `buddy-audit`. It reads the databases without changing
+them, streams rows instead of loading the complete database into RAM, and atomically writes
+`chat-database-audit.txt` plus `memory-documents-audit.txt` as UTF-8. Custom databases can
+be selected with `--database` and `--memory-database`. The default `audit/` directory,
+database-audit text files, and runtime logs are ignored by Git because they may contain
+private data.
 
 Automatic window-specific recording, segmentation, folder watching, active-game profile
 injection, and time-driven agent rounds are not part of this branch; they belong to the
@@ -279,6 +336,7 @@ Important settings:
 | --- | ---: | --- |
 | `AGENT.history_minutes` | `30` | Time window preserved as raw short-term context |
 | `AGENT.min_recent_messages` | `15` | Minimum number of recent messages kept unchanged |
+| `LANGUAGE.default_response_language` | `Polish` | Fallback reply language when the user has not selected another |
 | `MODELS.short_term_memory` | Gemini 3.1 Flash Lite | Model generating timed summaries |
 | `MODELS.long_term_memory` | Gemini 3.1 Flash Lite | Model curating durable and game memory |
 | `MODELS.memory_context_butler` | Gemini 3.1 Flash Lite | Model reducing recalled documents |
@@ -286,12 +344,15 @@ Important settings:
 | `MODELS.video_detail` | Gemini 3.1 Flash Lite | Native question-specific clip analysis |
 | `MODELS.video_context_butler` | Gemini 3.1 Flash Lite | Model maintaining current gameplay state |
 | `STORAGE.memory_database_path` | `data/memory.db` | Harness Memory SQLite store |
+| `MEMORY.recall_literal_terms` | `8` | Maximum exact OCR/name terms in one recall |
+| `MEMORY.recall_literal_term_chars` | `100` | Maximum length of one exact literal term |
 | `VIDEO.episode_summary_chars` | `1500` | Maximum durable brief-description size |
 | `VIDEO.context_chars` | `1000` | Maximum current-state context size |
 | `VIDEO.game_detection_confidence` | `0.9` | Minimum confidence for linking an existing game profile |
+| `VIDEO.recall_episode_chars` | `20000` | Maximum stored timeline payload returned per candidate episode |
 
 All code-level settings are immutable dataclass sections in `buddy/config.py`: `MODELS`,
-`AGENT`, `RUNTIME`, `STORAGE`, `MEMORY`, and `VIDEO`. Provider credentials and runtime-only
+`AGENT`, `RUNTIME`, `LANGUAGE`, `STORAGE`, `MEMORY`, and `VIDEO`. Provider credentials and runtime-only
 diagnostics stay in environment variables. Prompts, instructions, and injection markers are
 centralized in `buddy/prompts.py`.
 
@@ -371,8 +432,9 @@ the environment, regenerate `requirements-lock.txt`, and run all three commands.
 - **An old clip has only an overview:** reports made before the episode-timeline migration
   remain readable, but they do not gain a searchable full timeline without re-analysis.
 - **Polish characters are broken only in redirected PowerShell logs:** the SQLite value may
-  still be correct. Before capturing another log, run `chcp 65001` and set
-  `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`.
+  still be correct. Prefer `python -m buddy.audit`, which writes UTF-8 directly. For other
+  redirected commands, run `chcp 65001` and set `[Console]::OutputEncoding =
+  [System.Text.UTF8Encoding]::new()` first.
 - **SQLite reports a lock:** close other Buddy or video-analysis processes and retry. Do not
   copy or delete either database while a process is writing it.
 - **Memory was not updated:** finish the chat cleanly, then restart Buddy. Failed jobs remain
@@ -390,6 +452,7 @@ For a detailed guide to module relationships, storage ownership, and runtime cal
 game-buddy/
 ├── buddy/
 │   ├── agent.py               # Main agent composition
+│   ├── audit.py               # Read-only UTF-8 database and memory export
 │   ├── config.py              # Grouped model, agent, memory, storage, and video settings
 │   ├── database.py            # Raw conversations and database initialization
 │   ├── main.py                # Terminal loop, startup consolidation, and Logfire

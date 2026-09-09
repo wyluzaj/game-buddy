@@ -69,6 +69,14 @@ class MemoryAnalysisResult(BaseModel):
             "not qualify."
         ),
     )
+    session_summary_en: str = Field(
+        default="",
+        max_length=MEMORY.session_index_summary_chars * 4,
+        description=(
+            "English summary of the completed session for its durable session "
+            "document. Proper names and exact quotations retain source spelling."
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +85,7 @@ class AppliedMemoryAnalysis:
 
     changed: bool
     games_with_user_state: list[str]
+    session_summary_en: str = ""
 
 
 class MemoryAnalyzerRunResult(Protocol):
@@ -142,7 +151,7 @@ def build_memory_analysis_prompt(
     user_evidence_context: str | None = None,
 ) -> str:
     """Build a clearly delimited prompt for memory consolidation."""
-    current = current_memory or "(MEMORY.md jest obecnie puste)"
+    current = current_memory or "(MEMORY.md is currently empty)"
     evidence = user_evidence_context or session_context
     user_statements = extract_user_evidence(evidence)
     return LONG_TERM_MEMORY_ANALYSIS_PROMPT.format(
@@ -194,6 +203,9 @@ async def _apply_long_term_memory(
 
     result = await analyzer.run(prompt)
     analysis = result.output
+    session_summary_en = analysis.session_summary_en.strip()
+    if not session_summary_en:
+        raise ValueError("Memory analyzer returned an empty English session summary.")
     games_with_user_state = [
         name.strip()
         for name in analysis.games_with_user_state
@@ -203,6 +215,7 @@ async def _apply_long_term_memory(
         return AppliedMemoryAnalysis(
             changed=False,
             games_with_user_state=games_with_user_state,
+            session_summary_en=session_summary_en,
         )
 
     updated_memory = render_global_memory(analysis.global_facts)
@@ -212,6 +225,7 @@ async def _apply_long_term_memory(
         return AppliedMemoryAnalysis(
             changed=False,
             games_with_user_state=games_with_user_state,
+            session_summary_en=session_summary_en,
         )
 
     await memory.store.write(
@@ -222,6 +236,7 @@ async def _apply_long_term_memory(
     return AppliedMemoryAnalysis(
         changed=True,
         games_with_user_state=games_with_user_state,
+        session_summary_en=session_summary_en,
     )
 
 
@@ -330,6 +345,9 @@ async def process_pending_memories(
                     games_with_user_state=[
                         str(name) for name in game_names
                     ],
+                    session_summary_en=str(
+                        job.analysis.get("session_summary_en", "")
+                    ).strip(),
                 )
             else:
                 applied = await _apply_long_term_memory(
@@ -347,7 +365,18 @@ async def process_pending_memories(
                     analysis={
                         "changed": applied.changed,
                         "games_with_user_state": applied.games_with_user_state,
+                        "session_summary_en": applied.session_summary_en,
                     },
+                )
+            if session_document is not None and applied.session_summary_en:
+                session_document = await persist_session_document(
+                    conn,
+                    memory,
+                    conversation_id=conversation_id,
+                    started_at=parse_database_timestamp(row["created_at"]),
+                    ended_at=parse_database_timestamp(row["ended_at"]),
+                    session_context=applied.session_summary_en,
+                    video_observations=video_observations,
                 )
             if (
                 job.stage < MemoryProcessingStage.GAME_PROFILES_APPLIED

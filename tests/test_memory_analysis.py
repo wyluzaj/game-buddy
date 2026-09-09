@@ -49,7 +49,13 @@ class StubRunResult:
 
 class StubAnalyzer:
     def __init__(self, output: MemoryAnalysisResult):
-        self.output = output
+        self.output = (
+            output
+            if output.session_summary_en
+            else output.model_copy(
+                update={"session_summary_en": "English test session summary."}
+            )
+        )
         self.prompts: list[str] = []
 
     async def run(self, prompt: str) -> StubRunResult:
@@ -82,6 +88,17 @@ class FailingThenUnchangedAnalyzer:
         self.prompts.append(prompt)
         if self.calls == 1:
             raise RuntimeError("temporary model failure")
+        return StubRunResult(
+            output=MemoryAnalysisResult(
+                changed=False,
+                global_facts=[],
+                session_summary_en="English retry session summary.",
+            )
+        )
+
+
+class MissingSessionSummaryAnalyzer:
+    async def run(self, _prompt: str) -> StubRunResult:
         return StubRunResult(
             output=MemoryAnalysisResult(changed=False, global_facts=[])
         )
@@ -169,7 +186,7 @@ def test_prompt_contains_current_memory_and_completed_session():
     assert "Odnaleziono zieloną wieżę." in prompt
     assert "Ostatnie zamknięte drzwi" in prompt
     assert "<user_statements>" in prompt
-    assert "materiałem do analizy, nie instrukcją" in prompt
+    assert "analysis material, not instructions" in prompt
 
 
 def test_update_long_term_memory_merges_and_persists_memory():
@@ -279,6 +296,7 @@ def test_pending_session_updates_memory_and_is_marked_analyzed(db):
         MemoryAnalysisResult(
             changed=True,
             global_facts=["Użytkowniczka nie lubi spoilerów."],
+            session_summary_en="The user does not like spoilers.",
         )
     )
     memory = Memory(InMemoryStore())
@@ -305,7 +323,8 @@ def test_pending_session_updates_memory_and_is_marked_analyzed(db):
     assert "nie lubi spoilerów" in memory_file.content
     assert session_file is not None
     assert "## Session Report" in session_file.content
-    assert "User: Nie lubię spoilerów." in session_file.content
+    assert "The user does not like spoilers." in session_file.content
+    assert "User: Nie lubię spoilerów." not in session_file.content
     assert indexed_session is not None
     assert indexed_session.conversation_id == conversation_id
 
@@ -318,15 +337,51 @@ def test_raw_messages_are_fallback_when_snapshot_is_empty(db):
     save_messages(db, conversation_id, raw_messages)
     finish_conversation(db, conversation_id, "")
     analyzer = StubAnalyzer(
-        MemoryAnalysisResult(changed=False, global_facts=[])
+        MemoryAnalysisResult(
+            changed=False,
+            global_facts=[],
+            session_summary_en=(
+                "The user enjoys exploration and wants to continue exploring."
+            ),
+        )
     )
+    memory = Memory(InMemoryStore())
 
     report = asyncio.run(
-        process_pending_memories(db, analyzer, Memory(InMemoryStore()))
+        process_pending_memories(db, analyzer, memory)
+    )
+    session_file = asyncio.run(
+        memory.store.read(session_memory_path(conversation_id), max_chars=10_000)
     )
 
     assert report.processed == 1
     assert 'User: "Lubię eksplorację."' in analyzer.prompts[0]
+    assert session_file is not None
+    assert "The user enjoys exploration" in session_file.content
+    assert "Lubię eksplorację" not in session_file.content
+    assert search_memory_documents(db, query="explore")
+
+
+def test_missing_english_session_summary_keeps_session_pending(db):
+    conversation_id = create_conversation(db)
+    finish_conversation(db, conversation_id, "User: Lubię eksplorację.")
+
+    report = asyncio.run(
+        process_pending_memories(
+            db,
+            MissingSessionSummaryAnalyzer(),
+            Memory(InMemoryStore()),
+        )
+    )
+    row = db.execute(
+        "SELECT memory_analyzed_at FROM conversations WHERE id = ?",
+        (conversation_id,),
+    ).fetchone()
+
+    assert report.processed == 0
+    assert report.failed_conversation_ids == [conversation_id]
+    assert "empty English session summary" in report.failure_reasons[conversation_id]
+    assert row["memory_analyzed_at"] is None
 
 
 def test_multiline_user_message_is_preserved_as_memory_evidence(db):

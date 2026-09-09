@@ -67,6 +67,13 @@ class RuntimeSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class LanguageSettings:
+    """Language defaults for user-facing output."""
+
+    default_response_language: str = "Polish"
+
+
+@dataclass(frozen=True, slots=True)
 class StorageSettings:
     """Physical and logical storage locations."""
 
@@ -94,6 +101,8 @@ class MemorySettings:
     recall_results: int = 5
     recall_document_chars: int = 4_000
     recall_source_chars: int = 1_000_000
+    recall_literal_terms: int = 8
+    recall_literal_term_chars: int = 100
     context_chars: int = 1_500
     context_uncertainty_chars: int = 400
     context_sources: int = 5
@@ -111,6 +120,7 @@ class VideoSettings:
     context_chars: int = 1_000
     context_sources: int = 5
     context_uncertainty_chars: int = 400
+    recall_episode_chars: int = 20_000
     session_observations: int = 50
     session_observation_chars: int = 30_000
     manual_duration_seconds: float = 120.0
@@ -128,6 +138,7 @@ class VideoSettings:
 MODELS = ModelSettings()
 AGENT = AgentSettings()
 RUNTIME = RuntimeSettings()
+LANGUAGE = LanguageSettings()
 STORAGE = StorageSettings()
 MEMORY = MemorySettings()
 VIDEO = VideoSettings()

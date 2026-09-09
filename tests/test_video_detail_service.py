@@ -67,7 +67,7 @@ def _completed_segment(db, tmp_path):
     return segment
 
 
-def test_detail_analysis_is_source_bounded_persisted_and_reused(db, tmp_path):
+def test_detail_analysis_expands_source_to_complete_episode_and_reuses(db, tmp_path):
     segment = _completed_segment(db, tmp_path)
     detail = VideoDetailAnalysis(
         answer="Na ścianie był symbol lisa.",
@@ -104,7 +104,7 @@ def test_detail_analysis_is_source_bounded_persisted_and_reused(db, tmp_path):
     assert first.reused_existing_report is False
     assert second.reused_existing_report is True
     assert analyzer.calls == [
-        (segment.file_path, "Co było na ścianie?", 10.0, 20.0)
+        (segment.file_path, "Co było na ścianie?", 0.0, 30.0)
     ]
     assert len(
         get_video_reports(db, segment.id, mode=VideoReportMode.DETAIL)
@@ -125,7 +125,7 @@ def test_video_source_parser_rejects_external_unknown_and_oversized_ranges(
         parse_video_source(db, f"{segment.source_uri}?t=10-40")
 
 
-def test_out_of_range_detail_evidence_is_removed_and_reported(db, tmp_path):
+def test_out_of_episode_detail_evidence_is_removed_and_reported(db, tmp_path):
     segment = _completed_segment(db, tmp_path)
     analyzer = StubDetailAnalyzer(
         [
@@ -133,9 +133,9 @@ def test_out_of_range_detail_evidence_is_removed_and_reported(db, tmp_path):
                 answer="Nieprawidłowy zakres.",
                 observations=[
                     VideoDetailObservation(
-                        start_seconds=5,
-                        end_seconds=14,
-                        description="Dowód spoza zakresu.",
+                        start_seconds=31,
+                        end_seconds=34,
+                        description="Dowód spoza epizodu.",
                     )
                 ],
             )
@@ -152,10 +152,10 @@ def test_out_of_range_detail_evidence_is_removed_and_reported(db, tmp_path):
     )
 
     assert result.answer == (
-        "Nie udało się potwierdzić odpowiedzi w żądanym zakresie nagrania."
+        "The answer could not be confirmed in the selected video episode."
     )
-    assert result.sources == [f"{segment.source_uri}?t=10-20"]
-    assert "Odrzucono 1 obserwację" in result.uncertainties[-1]
+    assert result.sources == [segment.source_uri]
+    assert "Dropped 1 observation" in result.uncertainties[-1]
     reports = get_video_reports(
         db,
         segment.id,
@@ -173,9 +173,9 @@ def test_valid_detail_evidence_survives_invalid_provider_timestamp(db, tmp_path)
                 answer="W zakresie był czerwony balon.",
                 observations=[
                     VideoDetailObservation(
-                        start_seconds=5,
-                        end_seconds=9,
-                        description="Dowód spoza zakresu.",
+                        start_seconds=31,
+                        end_seconds=32,
+                        description="Dowód spoza epizodu.",
                     ),
                     VideoDetailObservation(
                         start_seconds=12,
@@ -198,7 +198,7 @@ def test_valid_detail_evidence_survives_invalid_provider_timestamp(db, tmp_path)
 
     assert result.answer == "W zakresie był czerwony balon."
     assert result.sources == [f"{segment.source_uri}?t=12-13"]
-    assert "Odrzucono 1 obserwację" in result.uncertainties[-1]
+    assert "Dropped 1 observation" in result.uncertainties[-1]
 
 
 def test_minute_decimal_provider_timestamps_are_normalized(db, tmp_path):
@@ -236,7 +236,7 @@ def test_minute_decimal_provider_timestamps_are_normalized(db, tmp_path):
         f"{segment.source_uri}?t=7-8",
         f"{segment.source_uri}?t=15-16",
     ]
-    assert "Znormalizowano timestampy" in result.uncertainties[-1]
+    assert "Normalized provider timestamps" in result.uncertainties[-1]
 
 
 def test_concurrent_identical_detail_requests_call_provider_once(db, tmp_path):
@@ -261,7 +261,7 @@ def test_concurrent_identical_detail_requests_call_provider_once(db, tmp_path):
             analyze_video_detail_source(
                 db,
                 analyzer,
-                source_uri=f"{segment.source_uri}?t=10-20",
+                source_uri=f"{segment.source_uri}?t=0-10",
                 question="Co było na ścianie?",
             ),
             analyze_video_detail_source(

@@ -19,12 +19,17 @@ buddy.main.main
        -> memory.session.persist_session_document
        -> journal checkpoint: SESSION_PERSISTED
        -> memory.analysis._apply_long_term_memory
+       -> analyzer returns session_summary_en even when global memory is unchanged
+       -> an empty session_summary_en fails the job and leaves it pending for retry
+       -> temporary raw session report is replaced by the canonical English report
        -> journal checkpoint: GLOBAL_APPLIED + structured analyzer result
        -> memory.game.link_session_to_games
        -> memory.game_analysis.update_game_profiles
        -> journal checkpoint: GAME_PROFILES_APPLIED
        -> mark conversation analyzed and remove completed journal row
   -> agent.build_agent
+       -> config.LANGUAGE default response language
+       -> separate overridable response-language instruction
        -> memory.compaction.SummarizingCompactionTimed
        -> memory.long_term.InjectionOnlyMemory
        -> memory.recall.recall_memory
@@ -66,7 +71,9 @@ buddy.video.cli
        -> video.context_service.process_video_report_context
             -> video.context_butler.build_video_context_prompt
             -> Video Context Butler Agent
-            -> persist an episode summary for historical recall
+            -> persist a concise, information-dense episode summary for historical recall
+                 -> omit non-gameplay overlays and preserve episode uncertainties
+            -> build a concrete current-state snapshot from up to six prioritized facts
             -> decide whether current gameplay state changed
             -> source validation
             -> video.storage.save_video_context_update
@@ -94,7 +101,8 @@ user asks about a visible or audible detail
   -> main agent finds a video://segment/... source in context
   -> analyze_video_detail tool
        -> video.detail_service.parse_video_source
-       -> validate segment ownership and timestamp range
+       -> validate the internal segment and any timestamp hint
+       -> expand the hint to the complete short episode
        -> build a canonical request key and acquire its in-process lock
        -> reuse an identical indexed detail report when available
        -> GeminiVideoAnalyzer.analyze_detail
@@ -106,7 +114,9 @@ user asks about a visible or audible detail
 ```
 
 The tool never accepts an arbitrary filesystem path from the model. It resolves only
-application-owned `video://segment/<id>` identifiers through SQLite.
+application-owned `video://segment/<id>` identifiers through SQLite. In the current MVP,
+a timestamped source selects a candidate but detailed Gemini analysis covers that complete
+short episode so an omitted detail elsewhere in the same recording is not missed.
 Invalid provider observations are removed before persistence, so the request cache never
 turns an out-of-range timestamp into trusted evidence.
 
@@ -125,7 +135,8 @@ completed conversation
        -> main/games/<game-slug>.md
   -> data/chatbot.db memory index
        -> memory_documents
-       -> memory_search (FTS5)
+       -> memory_search (legacy-compatible FTS5)
+       -> memory_search_en (canonical English FTS5 + Porter stemming)
        -> memory_relations (session -> game)
 ```
 
@@ -133,10 +144,18 @@ Future recall uses a bounded retrieval pipeline:
 
 ```text
 recall_memory
+  -> question keeps the user's original language for the Context Butler
+  -> query_en contains short English retrieval terms
+  -> literal_terms preserves exact original-language OCR, labels, and proper names
+       -> the tool schema requires a bounded JSON array, never comma-separated text
   -> memory_type=video
        -> video.storage.search_episode_observations
+            -> video_observation_search_en with English Porter stemming
             -> precise FTS5 AND query
             -> bounded OR fallback when added words produce no result
+            -> SQL ranking selects one best observation per distinct candidate episode
+            -> each candidate expands to its bounded complete timeline
+            -> only timestamp sources whose evidence fits the bound are exposed
        -> if no exact match and a game is known:
             video.storage.get_recent_episode_summaries (bounded fallback)
   -> memory_type=game/session/all
@@ -148,10 +167,16 @@ recall_memory
 ```
 
 The main agent must search stored episode evidence before requesting a new Gemini
-detail analysis. A detail request is allowed only for one concrete `video://` source
-returned by current context or recall; the agent never scans an unbounded recording set.
+detail analysis. A lexical hit selects an episode rather than becoming the final answer;
+the complete stored timeline (up to the configured character bound) is returned with its
+exact timestamp sources. A detail request is allowed only for one concrete `video://`
+source returned by current context or recall; the agent never scans an unbounded
+recording set.
 
-Global memory is based on explicit user statements. Video observations may enrich a
+Global memory is based on explicit user statements. The raw messages and the temporary
+shutdown snapshot keep their original language in `chatbot.db`; after analysis,
+`session_summary_en` replaces the logical session report and its search entry. Video
+observations may enrich a
 confirmed game's profile and session report, but they cannot become global user facts by
 themselves. A one-off behavior seen in video remains an event or mechanic and cannot be
 promoted to a durable user preference. Raw structured `ModelMessage` objects are the
@@ -163,6 +188,20 @@ The global analyzer returns a structured replacement list in `global_facts` plus
 turns global facts into Markdown. This removes substring-based deletion of model output.
 
 ## Storage map
+
+### Read-only audit export
+
+```text
+python -m buddy.audit
+  -> opens data/chatbot.db in SQLite read-only mode
+  -> streams application tables as Unicode JSON lines
+  -> lists and reads logical main/* documents from data/memory.db
+  -> atomically replaces both audit files written with Python encoding="utf-8"
+```
+
+This avoids depending on the active PowerShell code page and never migrates or mutates the
+databases during inspection. Audit outputs and runtime logs are ignored by Git because they
+may contain private conversations, memory, and local recording paths.
 
 ### `data/chatbot.db`
 
@@ -181,14 +220,16 @@ video_reports (overview or episode)
 
 video_reports (episode)
   1 -> many video_observations
-  indexed by video_observation_search (FTS5)
+  indexed by video_observation_search_en (canonical English FTS5 + Porter)
+  legacy rows retained in video_observation_search
 
 video_reports (detail)
   unique request_key -> one cached answer
 
 memory_documents
   session --belongs_to_game--> game
-  indexed by memory_search (FTS5)
+  indexed by memory_search_en (canonical English FTS5 + Porter)
+  legacy rows retained in memory_search
 
 memory_processing_jobs
   conversation_id -> ordered cross-database checkpoint + retry payload
@@ -205,7 +246,9 @@ Main responsibilities:
 The database uses `PRAGMA user_version`. Schema version 2 migrated the original path-unique
 video tables to recording keys and added indexed detail request keys. Version 3 adds the
 memory-processing journal. Version 4 adds detailed episode reports, normalized searchable
-observations, and optional segment-to-game links. Version 5 adds durable episode summaries
+observations, and optional segment-to-game links. Version 5 adds durable episode summaries.
+Version 6 adds canonical English Porter-stemmed memory and video indexes while retaining
+and backfilling the legacy FTS tables for existing databases.
 to context updates. Existing segment/report/context IDs are preserved. Storage reads
 validate report JSON and context-source JSON before returning domain objects.
 
@@ -236,27 +279,28 @@ and are deleted after generation whenever cleanup succeeds.
 | Module | Responsibility | Main dependencies / consumers |
 | --- | --- | --- |
 | `buddy/main.py` | Application composition, terminal loop, startup consolidation, session shutdown | Coordinates chat, memory, video injection, and persistence |
-| `buddy/config.py` | Central immutable sections for models, runtime diagnostics, agent, storage, memory, video, and MIME types | Used by all factories, services, models, and entry points |
-| `buddy/agent.py` | Main Pydantic AI agent factory | Registers compaction, global memory, recall, video detail, and web search |
-| `buddy/prompts.py` | Central LLM instructions and prompt templates | Used by chat, memory, Butler, and video analyzers |
+| `buddy/config.py` | Central immutable sections for models, runtime diagnostics, response language, agent, storage, memory, video, and MIME types | Used by all factories, services, models, and entry points |
+| `buddy/agent.py` | Main Pydantic AI agent factory | Registers independent behavior and response-language instructions, compaction, global memory, recall, video detail, and web search |
+| `buddy/audit.py` | Read-only UTF-8 export of application tables and logical Harness documents | Used for manual verification without PowerShell encoding conversion |
+| `buddy/prompts.py` | Central English LLM instructions, canonical-memory language rules, the overridable response-language policy, and prompt templates | Used by chat, memory, Butler, and video analyzers; Video Butler favors concrete, information-dense summaries while exact OCR and proper names retain their source language |
 | `buddy/database.py` | SQLite connection, conversations, and raw message batches | Initializes memory-index and video-storage schemas |
 | `buddy/memory/compaction.py` | Time-window short-memory compaction and history formatting | Main agent capability and session-memory formatter |
 | `buddy/memory/long_term.py` | Injection-only Harness Memory backed by SQLite | Used by chat, recall, and post-session analyzers |
 | `buddy/memory/session.py` | Logical `main/sessions/*.md` reports and indexing | Called at shutdown and pending-memory processing |
-| `buddy/memory/index.py` | Memory metadata, FTS5 search, and session-to-game relations | Used by session/game memory and recall |
-| `buddy/memory/analysis.py` | Completed-session global consolidation coordinator | Updates global memory, session documents, and game profiles |
+| `buddy/memory/index.py` | Memory metadata, canonical English Porter FTS5 search, legacy-index migration, and session-to-game relations | Used by session/game memory and recall |
+| `buddy/memory/analysis.py` | Completed-session consolidation coordinator | Updates global memory, replaces temporary session snapshots with `session_summary_en`, and coordinates game profiles |
 | `buddy/memory/journal.py` | Durable cross-database checkpoints and retry payloads | Lets pending-memory processing resume after session, global, or game stages |
 | `buddy/memory/game.py` | Game-name normalization, collision-safe paths, documents, and relations | Used by memory analysis and recall; adds a title hash only when two distinct titles share a slug |
 | `buddy/memory/game_analysis.py` | Source-aware updates of allowed `main/games/*.md` profiles | Receives explicit user evidence and video observations |
-| `buddy/memory/recall.py` | Bounded historical retrieval and reduction for game profiles, sessions, episode summaries, and timestamped video observations | Uses the memory/video indexes, Harness store, and Context Butler |
+| `buddy/memory/recall.py` | Bounded historical retrieval using original-language questions plus `query_en`; video hits expand into distinct complete episode timelines before Context Butler reduction | Uses the canonical memory/video indexes, Harness store, and Context Butler |
 | `buddy/memory/context_butler.py` | Small agent reducing recalled memory documents | Used only by `memory.recall.py` |
 | `buddy/video/models.py` | Video enums, dataclasses, legacy overview models, and detailed Episode Pydantic models | Shared contract for all video modules |
 | `buddy/video/analyzer.py` | Provider-neutral episode/detail protocols and domain errors | Implemented by Gemini; consumed by application services |
 | `buddy/video/gemini.py` | Gemini upload, polling, minimal provider-compatible JSON Schema generation, Pydantic parsing, and cleanup | Native provider adapter for episode, legacy overview, and detail modes; reports the failing provider stage |
 | `buddy/video/metadata.py` | Dependency-free MP4/MOV duration reader | Used by the manual CLI before segment registration |
-| `buddy/video/storage.py` | Versioned video schema, validated report/observation persistence, FTS5 episode search, game links, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
+| `buddy/video/storage.py` | Versioned video schema, validated report/observation persistence, canonical English Porter FTS5 episode search, legacy-index migration, game links, state transitions, and indexed request cache | Repository used by every video service and the chat loop |
 | `buddy/video/analysis_service.py` | Content-aware registration, atomic claim, episode timeline sanitization, retry, legacy-overview reuse, conservative game linking, and persistence | Connects `VideoAnalyzer` to `video.storage` without losing an otherwise valid episode |
-| `buddy/video/context_butler.py` | Episode-summary and replacement-state prompt construction plus source validation | Used by `video.context_service.py` |
+| `buddy/video/context_butler.py` | Episode-summary and replacement-state prompt construction plus source validation | Used by `video.context_service.py`; brief output omits non-gameplay overlays and cannot promote explicit episode uncertainty to fact |
 | `buddy/video/context_service.py` | Idempotent episode-to-summary/current-context reduction, including late-report handling | Connects storage to Video Context Butler |
 | `buddy/video/pipeline.py` | End-to-end episode and context-update orchestration | Used by the manual CLI and future capture worker |
 | `buddy/video/context_injection.py` | Replaces prior gameplay state in chat history | Used by the terminal loop |
@@ -270,6 +314,7 @@ and are deleted after generation whenever cleanup succeeds.
 | Test module | Main coverage |
 | --- | --- |
 | `tests/conftest.py` | Fresh shared SQLite `:memory:` fixture |
+| `tests/test_audit.py` | Read-only export boundaries and UTF-8 round trips |
 | `tests/test_config.py` | Model roles, tiers, and fallback selection |
 | `tests/test_timed_compaction.py` | Timed compaction, incremental summaries, and history filtering |
 | `tests/test_long_term_memory.py` | Harness store, injection-only behavior, and agent capabilities |

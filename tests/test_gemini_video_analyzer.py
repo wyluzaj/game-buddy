@@ -127,7 +127,7 @@ def test_gemini_analyzer_creates_detailed_episode_timeline(tmp_path):
     assert models.config is not None
     assert models.config.response_json_schema == _gemini_json_schema(EpisodeAnalysis)
     assert models.contents is not None
-    assert "szczegółową chronologiczną" in str(models.contents[0])
+    assert "detailed chronological" in str(models.contents[0])
     assert files.deleted_names == ["files/test-video"]
 
 
@@ -219,7 +219,9 @@ def test_gemini_analyzer_creates_question_specific_detail(tmp_path):
     )
     assert models.contents is not None
     assert "Co było napisane" in str(models.contents[0])
-    assert "10.000 do 20.000" in str(models.contents[0])
+    rendered_prompt = " ".join(str(models.contents[0]).split())
+    assert "complete short episode from 10.000 to 20.000 seconds" in rendered_prompt
+    assert "Search the entire interval" in rendered_prompt
     assert files.deleted_names == ["files/test-video"]
 
 

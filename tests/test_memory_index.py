@@ -190,6 +190,17 @@ def test_search_handles_arbitrary_query_text_and_enforces_result_limit(db):
         search_memory_documents(db, limit=0)
 
 
+def test_english_index_matches_inflected_word_forms(db):
+    document = _index_session(
+        db,
+        number=9,
+        body="The player collected three stars near the bridge.",
+        day=22,
+    )
+
+    assert search_memory_documents(db, query="star") == [document]
+
+
 def test_search_rejects_an_inverted_time_range(db):
     """A reversed interval fails explicitly instead of returning confusing data."""
     with pytest.raises(ValueError, match="earlier than"):

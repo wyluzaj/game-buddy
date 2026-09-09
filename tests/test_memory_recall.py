@@ -1,19 +1,23 @@
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import RunUsage
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 
+import buddy.memory.recall as recall_module
 from buddy.config import MODEL_TIERS, MODELS
+from buddy.config import VIDEO as VIDEO_SETTINGS
 from buddy.memory.context_butler import ContextButlerResult, build_context_butler
 from buddy.memory.game import ensure_game_document, link_session_to_games
 from buddy.memory.recall import (
     MemoryRecallCoordinator,
     MemoryRecallService,
     MemoryRecallType,
+    RecallLiteralTerms,
 )
 from buddy.memory.session import persist_session_document
 from buddy.video.models import EpisodeAnalysis, EpisodeObservation, VideoReportMode
@@ -114,12 +118,21 @@ def _add_episode(db, *, conversation_id: int, game_document_id: int):
         content=EpisodeAnalysis(
             observations=[
                 EpisodeObservation(
+                    start_seconds=0,
+                    end_seconds=12,
+                    activity="Crossing a wooden bridge.",
+                    location="River crossing",
+                    description="The player crossed a bridge toward the forest.",
+                    visible_objects=["wooden bridge", "river"],
+                ),
+                EpisodeObservation(
                     start_seconds=18,
                     end_seconds=27,
-                    activity="Eksplorowanie leśnej ścieżki.",
-                    location="Las",
-                    description="Czerwony balon wisiał po lewej stronie ścieżki.",
-                    visible_objects=["czerwony balon", "drzewa"],
+                    activity="Exploring a forest path.",
+                    location="Forest",
+                    description="A red balloon hung on the left side of the path.",
+                    visible_objects=["red balloon", "trees"],
+                    visible_text=["Magazyn"],
                 )
             ]
         ).model_dump(mode="json"),
@@ -127,7 +140,7 @@ def _add_episode(db, *, conversation_id: int, game_document_id: int):
     save_video_context_update(
         db,
         report_id=report.id,
-        episode_summary="Gracz przeszedł leśną ścieżką do tunelu.",
+        episode_summary="The player followed a forest path to a tunnel.",
         changed=True,
         context="Gracz znajduje się przy wejściu do tunelu.",
         sources=[segment.source_uri],
@@ -146,7 +159,7 @@ def test_recall_returns_game_profile_and_only_its_matching_sessions(db):
             day=20,
             context=(
                 f"User: {'Długi wcześniejszy kontekst. ' * 180}"
-                "Zamknięte drzwi są pod zieloną wieżą."
+                "The locked door is below the green tower."
             ),
         )
         await _add_session(
@@ -155,11 +168,11 @@ def test_recall_returns_game_profile_and_only_its_matching_sessions(db):
             conversation_id=2,
             game_name="Cyberpunk 2077",
             day=21,
-            context="User: Zamknięte drzwi są przy magazynie.",
+            context="User: The locked door is beside the warehouse.",
         )
 
         result = await MemoryRecallService(db, memory).recall(
-            query="zamknięte drzwi",
+            query_en="locked door",
             game="Elden Ring",
             memory_type=MemoryRecallType.ALL,
             limit=3,
@@ -170,7 +183,7 @@ def test_recall_returns_game_profile_and_only_its_matching_sessions(db):
 
     assert result.used_recent_fallback is False
     assert [match.path for match in result.matches] == [game_path, session_path]
-    assert "zieloną wieżą" in result.matches[1].content
+    assert "green tower" in result.matches[1].content
     assert result.matches[1].truncated is True
     assert result.matches[1].games == ["Elden Ring"]
     assert all("cyberpunk" not in match.path for match in result.matches)
@@ -189,7 +202,7 @@ def test_recall_marks_lexical_fallback_and_enforces_its_public_limit(db):
         )
         service = MemoryRecallService(db, memory)
         result = await service.recall(
-            query="zamek",
+            query_en="castle",
             game="Elden Ring",
             memory_type=MemoryRecallType.SESSION,
             date_from="2026-08-20",
@@ -235,14 +248,14 @@ def test_coordinator_returns_only_reduced_context_and_forwards_usage(db):
             game_name="Elden Ring",
             day=20,
             context=(
-                "User: Zamknięte drzwi są pod zieloną wieżą. "
-                "User: Nie lubię spoilerów."
+                "User: The locked door is below the green tower. "
+                "User: I do not like spoilers."
             ),
         )
         butler = StubContextButler(
             ContextButlerResult(
                 enough_evidence=True,
-                context="Ostatnie zamknięte drzwi były pod zieloną wieżą.",
+                context="The last locked door was below the green tower.",
                 sources=[session.path],
             )
         )
@@ -253,7 +266,7 @@ def test_coordinator_returns_only_reduced_context_and_forwards_usage(db):
         )
         result = await coordinator.recall(
             question="Gdzie były ostatnie zamknięte drzwi?",
-            query="zamknięte drzwi",
+            query_en="locked door",
             game="Elden Ring",
             memory_type=MemoryRecallType.SESSION,
             usage=usage,
@@ -262,9 +275,9 @@ def test_coordinator_returns_only_reduced_context_and_forwards_usage(db):
 
     result, butler, usage = asyncio.run(scenario())
 
-    assert result.context == "Ostatnie zamknięte drzwi były pod zieloną wieżą."
+    assert result.context == "The last locked door was below the green tower."
     assert not hasattr(result, "matches")
-    assert "Nie lubię spoilerów" in butler.prompts[0]
+    assert "I do not like spoilers" in butler.prompts[0]
     assert "Gdzie były ostatnie zamknięte drzwi?" in butler.prompts[0]
     assert butler.usages == [usage]
 
@@ -278,7 +291,7 @@ def test_coordinator_rejects_an_invented_source(db):
             conversation_id=1,
             game_name="Elden Ring",
             day=20,
-            context="User: Zamknięte drzwi są pod zieloną wieżą.",
+            context="User: The locked door is below the green tower.",
         )
         butler = StubContextButler(
             ContextButlerResult(
@@ -293,7 +306,7 @@ def test_coordinator_rejects_an_invented_source(db):
         )
         return await coordinator.recall(
             question="Gdzie były drzwi?",
-            query="zamknięte drzwi",
+            query_en="locked door",
             game="Elden Ring",
             memory_type=MemoryRecallType.SESSION,
         )
@@ -304,7 +317,7 @@ def test_coordinator_rejects_an_invented_source(db):
     assert result.context == ""
     assert result.sources == []
     assert result.uncertainty is not None
-    assert "spoza wyników" in result.uncertainty
+    assert "outside the search results" in result.uncertainty
 
 
 def test_coordinator_skips_delegate_when_nothing_was_found(db):
@@ -316,7 +329,7 @@ def test_coordinator_skips_delegate_when_nothing_was_found(db):
         )
         return await coordinator.recall(
             question="Co wydarzyło się wczoraj?",
-            query="nieistniejące wydarzenie",
+            query_en="nonexistent event",
             memory_type=MemoryRecallType.SESSION,
         )
 
@@ -345,7 +358,7 @@ def test_video_recall_returns_exact_timestamped_episode_observation(db):
             game_document_id=game.id,
         )
         result = await MemoryRecallService(db, memory).recall(
-            query="czerwony balon",
+            query_en="red balloon",
             game="Big Walk",
             memory_type=MemoryRecallType.VIDEO,
         )
@@ -355,9 +368,11 @@ def test_video_recall_returns_exact_timestamped_episode_observation(db):
 
     assert result.used_recent_fallback is False
     assert len(result.matches) == 1
-    assert result.matches[0].path == f"{segment.source_uri}?t=18-27"
-    assert result.matches[0].document_type == "video_observation"
-    assert "po lewej stronie" in result.matches[0].content
+    assert result.matches[0].path == segment.source_uri
+    assert result.matches[0].document_type == "episode_timeline"
+    assert "Crossing a wooden bridge" in result.matches[0].content
+    assert "left side" in result.matches[0].content
+    assert f"{segment.source_uri}?t=18-27" in result.matches[0].sources
     assert result.matches[0].games == ["Big Walk"]
 
 
@@ -378,7 +393,7 @@ def test_video_recall_relaxes_noisy_query_without_losing_game_filter(db):
             game_document_id=game.id,
         )
         result = await MemoryRecallService(db, memory).recall(
-            query="Big Walk czerwony balon timestamp",
+            query_en="Big Walk red balloon timestamp",
             game="Big Walk",
             memory_type=MemoryRecallType.VIDEO,
         )
@@ -387,8 +402,144 @@ def test_video_recall_relaxes_noisy_query_without_losing_game_filter(db):
     result, segment = asyncio.run(scenario())
 
     assert result.used_recent_fallback is False
-    assert result.matches[0].path == f"{segment.source_uri}?t=18-27"
-    assert result.matches[0].document_type == "video_observation"
+    assert result.matches[0].path == segment.source_uri
+    assert result.matches[0].document_type == "episode_timeline"
+
+
+def test_video_recall_uses_original_language_ocr_literal(db):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        _, game = await _add_session(
+            db,
+            memory,
+            conversation_id=1,
+            game_name="Big Walk",
+            day=20,
+            context="User: I am playing Big Walk.",
+        )
+        segment = _add_episode(
+            db,
+            conversation_id=1,
+            game_document_id=game.id,
+        )
+        result = await MemoryRecallService(db, memory).recall(
+            query_en="warehouse",
+            literal_terms=["Magazyn"],
+            game="Big Walk",
+            memory_type=MemoryRecallType.VIDEO,
+        )
+        return result, segment
+
+    result, segment = asyncio.run(scenario())
+
+    assert result.used_recent_fallback is False
+    assert result.matches[0].path == segment.source_uri
+    assert "Visible text: Magazyn" in result.matches[0].content
+
+
+def test_recall_rejects_too_many_literal_terms(db):
+    with pytest.raises(ValueError, match="at most"):
+        asyncio.run(
+            MemoryRecallService(db, Memory(InMemoryStore())).recall(
+                literal_terms=[f"term-{index}" for index in range(9)],
+            )
+        )
+
+
+def test_literal_terms_tool_schema_requires_a_bounded_json_array():
+    adapter = TypeAdapter(RecallLiteralTerms)
+    schema = adapter.json_schema()
+    array_schema = next(item for item in schema["anyOf"] if item.get("type") == "array")
+
+    assert "Always use an array" in schema["description"]
+    assert "Never pass a comma-separated string" in schema["description"]
+    assert array_schema["maxItems"] == recall_module.MEMORY.recall_literal_terms
+    assert array_schema["items"]["maxLength"] == (
+        recall_module.MEMORY.recall_literal_term_chars
+    )
+    with pytest.raises(ValidationError):
+        adapter.validate_python("Jazzy, Aenne")
+
+
+def test_context_butler_can_cite_an_exact_range_from_expanded_timeline(db):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        _, game = await _add_session(
+            db,
+            memory,
+            conversation_id=1,
+            game_name="Big Walk",
+            day=20,
+            context="User: I am playing Big Walk.",
+        )
+        segment = _add_episode(
+            db,
+            conversation_id=1,
+            game_document_id=game.id,
+        )
+        exact_source = f"{segment.source_uri}?t=18-27"
+        butler = StubContextButler(
+            ContextButlerResult(
+                enough_evidence=True,
+                context="The red balloon was on the left side of the path.",
+                sources=[exact_source],
+            )
+        )
+        coordinator = MemoryRecallCoordinator(
+            MemoryRecallService(db, memory),
+            butler,
+        )
+        result = await coordinator.recall(
+            question="Gdzie był czerwony balon?",
+            query_en="red balloon",
+            game="Big Walk",
+            memory_type=MemoryRecallType.VIDEO,
+        )
+        return result, exact_source
+
+    result, exact_source = asyncio.run(scenario())
+
+    assert result.enough_evidence is True
+    assert result.sources == [exact_source]
+
+
+def test_truncated_timeline_exposes_only_sources_present_in_content(
+    db,
+    monkeypatch,
+):
+    async def scenario():
+        memory = Memory(InMemoryStore())
+        _, game = await _add_session(
+            db,
+            memory,
+            conversation_id=1,
+            game_name="Big Walk",
+            day=20,
+            context="User: I am playing Big Walk.",
+        )
+        segment = _add_episode(
+            db,
+            conversation_id=1,
+            game_document_id=game.id,
+        )
+        monkeypatch.setattr(
+            recall_module,
+            "VIDEO",
+            replace(VIDEO_SETTINGS, recall_episode_chars=250),
+        )
+        result = await MemoryRecallService(db, memory).recall(
+            query_en="red balloon",
+            game="Big Walk",
+            memory_type=MemoryRecallType.VIDEO,
+        )
+        return result.matches[0], segment
+
+    match, segment = asyncio.run(scenario())
+
+    assert match.truncated is True
+    assert match.sources[0] == segment.source_uri
+    assert f"{segment.source_uri}?t=18-27" not in match.sources
+    assert all(source in match.content for source in match.sources[1:])
 
 
 def test_video_recall_falls_back_to_recent_episode_summary_for_known_game(db):
@@ -408,7 +559,7 @@ def test_video_recall_falls_back_to_recent_episode_summary_for_known_game(db):
             game_document_id=game.id,
         )
         result = await MemoryRecallService(db, memory).recall(
-            query="nieopisany przedmiot",
+            query_en="undescribed item",
             game="Big Walk",
             memory_type=MemoryRecallType.VIDEO,
         )
@@ -419,4 +570,4 @@ def test_video_recall_falls_back_to_recent_episode_summary_for_known_game(db):
     assert result.used_recent_fallback is True
     assert [match.path for match in result.matches] == [segment.source_uri]
     assert result.matches[0].document_type == "episode_summary"
-    assert "leśną ścieżką" in result.matches[0].content
+    assert "forest path" in result.matches[0].content

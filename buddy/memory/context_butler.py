@@ -76,7 +76,7 @@ def validate_butler_sources(
             enough_evidence=False,
             context="",
             sources=[],
-            uncertainty="Context Butler wskazał źródło spoza wyników wyszukiwania.",
+            uncertainty="Context Butler returned a source outside the search results.",
         )
     sources = list(dict.fromkeys(result.sources))
     if result.enough_evidence and not sources:
@@ -85,8 +85,8 @@ def validate_butler_sources(
             context="",
             sources=[],
             uncertainty=(
-                "Context Butler nie wskazał prawidłowego źródła dla znalezionych "
-                "informacji."
+                "Context Butler did not provide a valid source for the retrieved "
+                "information."
             ),
         )
     return result.model_copy(update={"sources": sources})

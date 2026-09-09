@@ -145,13 +145,13 @@ def validate_video_context_result(
         return VideoContextButlerResult(
             episode_summary=summary,
             changed=False,
-            uncertainty="Video Context Butler nie uzasadnił zmiany źródłami.",
+            uncertainty="Video Context Butler did not support the change with sources.",
         )
     if any(source not in allowed_sources for source in sources):
         return VideoContextButlerResult(
             episode_summary=summary,
             changed=False,
-            uncertainty="Video Context Butler wskazał nieznane źródło wideo.",
+            uncertainty="Video Context Butler returned an unknown video source.",
         )
     return result.model_copy(
         update={

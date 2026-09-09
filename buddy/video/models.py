@@ -269,8 +269,8 @@ def episode_from_legacy_overview(
         EpisodeObservation(
             start_seconds=text.timestamp_seconds,
             end_seconds=text.timestamp_seconds,
-            activity="Odczyt tekstu z ekranu.",
-            description=f"Na ekranie widoczny jest tekst: {text.text}",
+            activity="Reading on-screen text.",
+            description=f"Visible on-screen text: {text.text}",
             visible_text=[text.text],
         )
         for text in overview.visible_text
@@ -280,7 +280,7 @@ def episode_from_legacy_overview(
             EpisodeObservation(
                 start_seconds=0,
                 end_seconds=duration_seconds,
-                activity="Ogólny przebieg odcinka.",
+                activity="General episode activity.",
                 description=overview.summary,
             )
         )
