@@ -3,6 +3,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import RunUsage
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai_harness.memory import InMemoryStore, Memory
@@ -16,6 +17,7 @@ from buddy.memory.recall import (
     MemoryRecallCoordinator,
     MemoryRecallService,
     MemoryRecallType,
+    RecallLiteralTerms,
 )
 from buddy.memory.session import persist_session_document
 from buddy.video.models import EpisodeAnalysis, EpisodeObservation, VideoReportMode
@@ -442,6 +444,21 @@ def test_recall_rejects_too_many_literal_terms(db):
                 literal_terms=[f"term-{index}" for index in range(9)],
             )
         )
+
+
+def test_literal_terms_tool_schema_requires_a_bounded_json_array():
+    adapter = TypeAdapter(RecallLiteralTerms)
+    schema = adapter.json_schema()
+    array_schema = next(item for item in schema["anyOf"] if item.get("type") == "array")
+
+    assert "Always use an array" in schema["description"]
+    assert "Never pass a comma-separated string" in schema["description"]
+    assert array_schema["maxItems"] == recall_module.MEMORY.recall_literal_terms
+    assert array_schema["items"]["maxLength"] == (
+        recall_module.MEMORY.recall_literal_term_chars
+    )
+    with pytest.raises(ValidationError):
+        adapter.validate_python("Jazzy, Aenne")
 
 
 def test_context_butler_can_cite_an_exact_range_from_expanded_timeline(db):

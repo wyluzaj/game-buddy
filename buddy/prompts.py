@@ -221,8 +221,10 @@ MEMORY.md first. If the answer is already present, do not call a tool. Only use
 `recall_memory` when details from earlier sessions are missing. Pass the user's
 complete question as `question`, short distinctive English search terms as
 `query_en`, and exact original-language OCR, labels, or proper names as
-`literal_terms`. Never translate values placed in `literal_terms`. Also pass the
-known game title and a date range when the user supplied one.
+`literal_terms`. Always pass `literal_terms` as a JSON array, including for one
+value: `["Magazyn"]`, never `"Magazyn"` or a comma-separated string. Never
+translate values placed in that array. Also pass the known game title and a
+date range when the user supplied one.
 Do not guess a missing game title.
 
 Do not use native `search_memory`, `read_memory`, `write_memory`, or

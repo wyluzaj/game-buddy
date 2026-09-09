@@ -4,7 +4,7 @@ import re
 import sqlite3
 from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
-from typing import Awaitable, Callable, cast
+from typing import Annotated, Awaitable, Callable, cast
 
 from pydantic import BaseModel, Field
 from pydantic_ai import RunContext, RunUsage
@@ -42,6 +42,23 @@ class MemoryRecallType(str, Enum):
     GAME = "game"
     SESSION = "session"
     VIDEO = "video"
+
+
+RecallLiteralTerm = Annotated[
+    str,
+    Field(max_length=MEMORY.recall_literal_term_chars),
+]
+RecallLiteralTerms = Annotated[
+    list[RecallLiteralTerm] | None,
+    Field(
+        max_length=MEMORY.recall_literal_terms,
+        description=(
+            "A JSON array of separate exact original-language OCR strings, labels, "
+            'or proper names. Always use an array, even for one value, for example '
+            '["Magazyn"] or ["Jazzy", "Aenne"]. Never pass a comma-separated string.'
+        ),
+    ),
+]
 
 
 class RecalledMemory(BaseModel):
@@ -509,7 +526,7 @@ def create_recall_memory_tool(
         ctx: RunContext,
         question: str,
         query_en: str | None = None,
-        literal_terms: list[str] | None = None,
+        literal_terms: RecallLiteralTerms = None,
         game: str | None = None,
         memory_type: MemoryRecallType = MemoryRecallType.ALL,
         date_from: str | None = None,
@@ -521,8 +538,10 @@ def create_recall_memory_tool(
         `question` is the user's complete information need in its original
         language. Translate short distinctive search terms into canonical English
         and pass them in `query_en`. Put exact original-language OCR, labels, and
-        proper names in `literal_terms`; do not translate those values. `game`
-        should be a title explicitly known from the conversation. Use
+        proper names in `literal_terms` as a JSON array, even for one value, for
+        example `["Magazyn"]`. Never pass a comma-separated string and do not
+        translate the array values. `game` should be a title explicitly known
+        from the conversation. Use
         `memory_type="video"` for earlier gameplay
         footage; exact observations are preferred and recent episode summaries
         are the bounded fallback for a known game. Dates use YYYY-MM-DD and are
